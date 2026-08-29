@@ -12,6 +12,7 @@ export type ScannerStatus =
   | "blocked"
   | "in-use"
   | "no-camera"
+  | "insecure"
   | "error"
   | "stopped";
 
@@ -22,50 +23,53 @@ interface ScannerControls {
 interface CameraIssue {
   title: string;
   description: string;
+  /** Tunjukkan tombol "Buka di Tab Baru" (untuk kasus pratinjau/izin). */
   showNewTab: boolean;
 }
 
 const CAMERA_ISSUES: Record<string, CameraIssue> = {
+  insecure: {
+    title: "Koneksi tidak aman (HTTP)",
+    description:
+      "Browser hanya mengizinkan kamera lewat HTTPS atau localhost. Buka aplikasi dengan alamat yang diawali https://",
+    showNewTab: false,
+  },
   denied: {
     title: "Izin kamera ditolak",
     description:
-      "Ketuk ikon gembok 🔒 di bilah alamat browser, izinkan Kamera, lalu tekan Coba Lagi.",
+      "Browser sedang memblokir kamera untuk aplikasi ini, dan dialog izin tidak akan muncul lagi sendirinya. Ketuk ikon 🔒 / ⚙️ di bilah alamat → izinkan Kamera — kamera akan menyala otomatis setelah diizinkan.",
     showNewTab: true,
   },
   blocked: {
     title: "Kamera diblokir mode pratinjau",
     description:
-      "Aplikasi sedang terbuka di dalam bingkai pratinjau yang memblokir kamera. Buka di tab baru supaya kamera bisa menyala.",
+      "Aplikasi terbuka di dalam bingkai pratinjau yang memblokir kamera. Ketuk ikon 🔒 di bilah alamat → izinkan Kamera; jika tidak ada opsinya, buka di tab baru supaya dialog izin bisa muncul.",
     showNewTab: true,
   },
   "in-use": {
     title: "Kamera sedang dipakai aplikasi lain",
     description:
-      "Tutup aplikasi lain yang memakai kamera (mis. WhatsApp / kamera), lalu tekan Coba Lagi.",
+      "Tutup aplikasi lain yang memakai kamera (mis. WhatsApp, Zoom, aplikasi kamera), lalu tekan Coba Lagi.",
     showNewTab: false,
   },
   "no-camera": {
     title: "Kamera tidak ditemukan",
     description:
-      "Perangkat ini tidak memiliki kamera yang bisa dipakai. Masukkan kode barcode secara manual di bawah.",
+      "Perangkat ini tidak memiliki kamera yang bisa dipakai browser. Masukkan kode barcode secara manual di bawah.",
     showNewTab: false,
   },
   error: {
     title: "Kamera tidak bisa dibuka",
     description:
-      "Coba tutup lalu buka ulang halaman ini. Kalau tetap gagal, masukkan kode barcode secara manual di bawah.",
+      "Coba muat ulang halaman ini. Kalau tetap gagal, masukkan kode barcode secara manual di bawah.",
     showNewTab: true,
   },
 };
 
 /** Ubah error kamera menjadi status yang bisa ditampilkan jelas. */
-function classifyCameraError(error: unknown): ScannerStatus {
+function classifyCameraError(error: unknown, inIframe: boolean): ScannerStatus {
   const name = (error as { name?: string } | null)?.name ?? "";
   if (["NotAllowedError", "SecurityError", "PermissionDeniedError"].includes(name)) {
-    // Di dalam iframe pratinjau, penolakan hampir selalu karena bingkai
-    // tidak diizinkan memakai kamera — bukan salah pengguna.
-    const inIframe =
-      typeof window !== "undefined" && window.self !== window.top;
     return inIframe ? "blocked" : "denied";
   }
   if (["NotReadableError", "TrackStartError", "AbortError"].includes(name)) {
@@ -79,10 +83,15 @@ function classifyCameraError(error: unknown): ScannerStatus {
 
 /**
  * Tampilan kamera pemindai barcode (ZXing) — hanya berjalan di klien.
- * Status izin/kegagalan kamera didiagnosis spesifik agar pesannya jelas:
- * izin ditolak, diblokir bingkai pratinjau, dipakai aplikasi lain,
- * kamera tidak ada, atau galat umum — masing-masing dengan solusinya.
- * Format yang dibaca: barcode ritel umum (EAN-13/8, UPC-A/E, Code128/39, ITF).
+ *
+ * Perilaku izin kamera:
+ * - Status izin dicek lewat navigator.permissions SEBELUM meminta kamera.
+ *   Bila 'prompt' (belum pernah ditanya), getUserMedia memunculkan POPUP izin.
+ * - Bila sudah 'denied', browser TIDAK akan menampilkan popup lagi — pengguna
+ *   diarahkan mengubah lewat ikon 🔒, dan saat diubah menjadi izinkan,
+ *   pemindai MENYALA OTOMATIS (permissions.onchange).
+ * - Kegagalan lain didiagnosis spesifik: diblokir bingkai pratinjau,
+ *   dipakai aplikasi lain, kamera tidak ada, konteks tidak aman, galat umum.
  */
 export function ScannerView({
   onCode,
@@ -101,29 +110,59 @@ export function ScannerView({
     handledRef.current = false;
     setStatus("starting");
 
-    /** Pre-flight: picu dialog izin & dapatkan nama error yang akurat. */
-    async function probeCamera(): Promise<void> {
+    const inIframe =
+      typeof window !== "undefined" && window.self !== window.top;
+
+    /** Mulai ulang pemindai (dipakai juga saat izin berubah jadi izinkan). */
+    const restart = (): void => setRetryCount((count) => count + 1);
+
+    /** Pantau perubahan izin — begitu diizinkan, kamera menyala otomatis. */
+    function watchPermission(): void {
+      if (typeof navigator === "undefined" || !navigator.permissions?.query) return;
+      navigator.permissions
+        .query({ name: "camera" as PermissionName })
+        .then((permission) => {
+          permission.onchange = () => {
+            if (cancelled) return;
+            if (permission.state === "granted") restart();
+          };
+        })
+        .catch(() => undefined);
+    }
+
+    async function requestCamera(): Promise<void> {
+      // 1) Konteks harus aman & API kamera harus ada.
       if (
         typeof navigator === "undefined" ||
         !navigator.mediaDevices?.getUserMedia
       ) {
-        // Konteks tidak aman / diblokir sepenuhnya.
-        throw new DOMException("mediaDevices tidak tersedia", "SecurityError");
+        setStatus("insecure");
+        return;
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
-        audio: false,
-      });
-      stream.getTracks().forEach((track) => track.stop());
-    }
 
-    async function startCamera(): Promise<void> {
+      // 2) Cek status izin terlebih dahulu.
+      try {
+        const permission = await navigator.permissions.query({
+          name: "camera" as PermissionName,
+        });
+        if (permission.state === "denied") {
+          // Browser tidak akan menampilkan popup — arahkan ke ikon 🔒.
+          setStatus(inIframe ? "blocked" : "denied");
+          watchPermission();
+          return;
+        }
+        // state 'prompt' → getUserMedia di bawah akan memunculkan POPUP izin.
+        // state 'granted' → langsung jalan tanpa bertanya.
+      } catch {
+        // Browser tanpa dukungan permissions.query (mis. Firefox/Safari lama)
+        // — lanjut langsung; popup akan muncul dari getUserMedia.
+      }
+
+      // 3) Nyalakan kamera sekali saja (satu getUserMedia, tanpa pre-flight
+      //    ganda yang bisa membuat kamera bentrok dengan dirinya sendiri).
       const video = videoRef.current;
       if (!video) return;
       try {
-        await probeCamera();
-        if (cancelled) return;
-
         const [{ BrowserMultiFormatReader }, zxing] = await Promise.all([
           import("@zxing/browser"),
           import("@zxing/library"),
@@ -169,11 +208,13 @@ export function ScannerView({
       } catch (error) {
         if (cancelled) return;
         console.warn("[warungku] Kamera tidak bisa dibuka:", error);
-        setStatus(classifyCameraError(error));
+        const next = classifyCameraError(error, inIframe);
+        setStatus(next);
+        if (next === "denied" || next === "blocked") watchPermission();
       }
     }
 
-    void startCamera();
+    void requestCamera();
     return () => {
       cancelled = true;
       controlsRef.current?.stop();
@@ -207,7 +248,7 @@ export function ScannerView({
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 bg-stone-950/88 px-6 text-center">
           <Icon name="alert" className="h-8 w-8 text-amber-400" />
           <p className="text-sm font-bold text-white">{issue.title}</p>
-          <p className="max-w-[34ch] text-xs leading-relaxed text-white/70">
+          <p className="max-w-[36ch] text-xs leading-relaxed text-white/70">
             {issue.description}
           </p>
           <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
@@ -228,9 +269,10 @@ export function ScannerView({
               </a>
             ) : null}
           </div>
-          {issue.showNewTab ? (
+          {status === "denied" || status === "blocked" ? (
             <p className="text-[11px] text-white/45">
-              Tab baru membuka aplikasi penuh — kamera bisa menyala normal.
+              Setelah diizinkan lewat ikon 🔒, kamera menyala otomatis — tanpa
+              perlu menekan apa pun.
             </p>
           ) : null}
         </div>

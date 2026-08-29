@@ -59,9 +59,12 @@ BUKA APLIKASI → SCAN BARCODE
   gaya aplikasi dompet digital), diapit Beranda · Transaksi (kiri) dan
   Laporan · AI (kanan). Produk diakses dari pintasan Beranda. Layar scan
   tampil penuh tanpa navigasi.
-- **Kamera**: bila kamera diblokir (mis. dibuka dalam bingkai pratinjau),
-  aplikasi menampilkan penyebab spesifik + tombol **Buka di Tab Baru** —
-  di tab penuh, izin kamera bisa diberikan dan scanner menyala normal.
+- **Kamera**: status izin dicek lewat `navigator.permissions` — bila belum
+  pernah ditanya, popup izin browser muncul saat scanner dibuka. Bila izin
+  pernah DITOLAK (browser tidak menampilkan popup lagi), aplikasi
+  mengarahkan ke ikon 🔒 dan **kamera menyala otomatis** begitu diizinkan.
+  Kasus lain (bingkai pratinjau, kamera dipakai aplikasi lain, kamera tidak
+  ada, HTTP tidak aman) didiagnosis spesifik + tombol **Buka di Tab Baru**.
   Kode manual selalu tersedia sebagai jalur cadangan.
 
 ## 1. Tujuan Produk
