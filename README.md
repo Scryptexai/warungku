@@ -11,7 +11,7 @@ bahasa Indonesia sehari-hari.
 
 | Area | Status |
 | --- | --- |
-| Kerangka aplikasi + navigasi bawah + Beranda gaya dompet digital | ✅ Tahap 1–2 |
+| Kerangka aplikasi + navigasi bawah (tombol SCAN tengah gaya dompet digital) | ✅ Tahap 1–2 |
 | Produk: daftar, cari (nama/barcode/**kategori**), tambah, edit, detail | ✅ Tahap 2–4 |
 | **Baca katalog langsung dari Google Sheets (+ tombol segarkan)** | ✅ Tahap 4 |
 | **Edit lengkap: nama, kategori, harga, stok, dan SATUAN** | ✅ Tahap 4 |
@@ -38,6 +38,18 @@ BUKA APLIKASI → SCAN BARCODE
 ```
 
 ---
+
+
+### Navigasi & kamera
+
+- **Navigasi bawah**: tombol **SCAN besar di tengah** (aksi utama aplikasi,
+  gaya aplikasi dompet digital), diapit Beranda · Transaksi (kiri) dan
+  Laporan · AI (kanan). Produk diakses dari pintasan Beranda. Layar scan
+  tampil penuh tanpa navigasi.
+- **Kamera**: bila kamera diblokir (mis. dibuka dalam bingkai pratinjau),
+  aplikasi menampilkan penyebab spesifik + tombol **Buka di Tab Baru** —
+  di tab penuh, izin kamera bisa diberikan dan scanner menyala normal.
+  Kode manual selalu tersedia sebagai jalur cadangan.
 
 ## 1. Tujuan Produk
 

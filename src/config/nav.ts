@@ -3,9 +3,8 @@ import type { IconName } from "@/components/ui/icons";
 /**
  * Definisi navigasi & pintasan aplikasi.
  *
- * `phase` = fase roadmap ketika fungsi penuh modul tersebut aktif
- * (lihat README). Seluruh tujuan sudah bisa dibuka sejak Tahap 1
- * sebagai kerangka UI.
+ * Navigasi bawah memakai pola dompet digital: tombol SCAN besar di TENGAH
+ * (aksi utama aplikasi), diapit dua tab di kiri & kanan.
  */
 
 export interface NavItem {
@@ -16,8 +15,8 @@ export interface NavItem {
   phase: number;
 }
 
-/** Navigasi bawah utama — pola dompet digital: 5 tab, ikon + label singkat. */
-export const BOTTOM_NAV_ITEMS: NavItem[] = [
+/** Tab kiri tombol scan tengah. */
+export const LEFT_NAV_ITEMS: NavItem[] = [
   {
     href: "/",
     label: "Beranda",
@@ -32,13 +31,10 @@ export const BOTTOM_NAV_ITEMS: NavItem[] = [
     icon: "receipt",
     phase: 4,
   },
-  {
-    href: "/produk",
-    label: "Produk",
-    description: "Daftar barang, harga, & stok",
-    icon: "box",
-    phase: 2,
-  },
+];
+
+/** Tab kanan tombol scan tengah. */
+export const RIGHT_NAV_ITEMS: NavItem[] = [
   {
     href: "/laporan",
     label: "Laporan",
@@ -55,13 +51,16 @@ export const BOTTOM_NAV_ITEMS: NavItem[] = [
   },
 ];
 
+/** Halaman tujuan tombol scan tengah — AKSI UTAMA aplikasi. */
+export const SCAN_HREF = "/scan";
+
 /** Pintasan di Beranda — akses satu ketuk ke fungsi penting warung. */
 export const QUICK_ACCESS_ITEMS: NavItem[] = [
   {
-    href: "/produk/tambah",
-    label: "Tambah Produk",
-    description: "Tambah produk baru",
-    icon: "plus",
+    href: "/produk",
+    label: "Produk",
+    description: "Daftar barang warung",
+    icon: "box",
     phase: 2,
   },
   {
