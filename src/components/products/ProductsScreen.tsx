@@ -120,6 +120,7 @@ export function ProductsScreen() {
   const [refreshError, setRefreshError] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [seedReport, setSeedReport] = useState<string | null>(null);
+  const [stockBusy, setStockBusy] = useState(false);
 
   // Filter kategori — bisa pilih beberapa sekaligus.
   const [activeCategories, setActiveCategories] = useState<string[]>([]);
@@ -178,6 +179,33 @@ export function ProductsScreen() {
       setSeedReport("Gagal menambah master. Coba lagi.");
     } finally {
       setSeeding(false);
+      window.setTimeout(() => setSeedReport(null), 4000);
+    }
+  }
+
+  /**
+   * Tombol dev: set stok = 100 untuk SEMUA produk sekaligus. Idempotent.
+   * Berguna saat founder sudah menyalin master ke katalog dan ingin semua
+   * barang tampil dengan stok awal yang seragam. Tidak menimpa transaksi
+   * (transaksi membawa snapshot qty sendiri).
+   */
+  async function handleSetStockAll() {
+    if (stockBusy) return;
+    if (catalogProducts === null || catalogProducts.length === 0) return;
+    setStockBusy(true);
+    setSeedReport(null);
+    try {
+      const result = await products.bulkSetStockForAll(100);
+      reloadLocal();
+      setSeedReport(
+        result.updated > 0
+          ? `✓ Stok = ${result.value} diterapkan ke ${result.updated} produk.`
+          : "Katalog kosong — set stok dilewati.",
+      );
+    } catch {
+      setSeedReport("Gagal mengatur stok. Coba lagi.");
+    } finally {
+      setStockBusy(false);
       window.setTimeout(() => setSeedReport(null), 4000);
     }
   }
@@ -341,6 +369,16 @@ export function ProductsScreen() {
               className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-stone-300 bg-white text-stone-600 active:opacity-80 disabled:opacity-50"
             >
               <Icon name="upload" className={cn("h-5 w-5", seeding && "animate-pulse")} />
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSetStockAll()}
+              disabled={stockBusy || (catalogProducts?.length ?? 0) === 0}
+              aria-label="Set stok = 100 untuk semua produk"
+              title="Set stok = 100 untuk semua produk (idempotent, sekali jalan)"
+              className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-stone-300 bg-white text-stone-600 active:opacity-80 disabled:opacity-50"
+            >
+              <Icon name="box" className={cn("h-5 w-5", stockBusy && "animate-pulse")} />
             </button>
             <Link
               href="/produk/tambah"

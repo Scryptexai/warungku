@@ -337,6 +337,32 @@ export class ProductService {
   }
 
   /**
+   * ATUR STOK = nilai yang sama untuk SEMUA produk. Idempotent: dipanggil
+   * berulang-ulang, nilai stok akan sama. Stok awal = 0 (master tidak
+   * tahu stok nyata) — founder mengisi via tombol dev di /produk. Tulis
+   * lokal sekali, enqueue UPDATE per produk; sync engine kirim ke Sheets
+   * saat token Google hidup.
+   */
+  async bulkSetStockForAll(value: number): Promise<{ updated: number; value: number }> {
+    const safe = Math.max(0, Math.round(value));
+    const products = await this.localStore.getCachedProducts();
+    if (products.length === 0) return { updated: 0, value: safe };
+    const now = nowISO();
+    const next = products.map((p) => ({ ...p, stock: safe, updatedAt: now }));
+    await this.localStore.setCachedProducts(next);
+    for (const product of next) {
+      await this.syncEngine.enqueue({
+        id: createPrefixedId("op"),
+        kind: "UPDATE",
+        entity: "PRODUCT",
+        payload: product,
+        createdAt: now,
+      });
+    }
+    return { updated: next.length, value: safe };
+  }
+
+  /**
    * Ubah harga BANYAK produk sekaligus (mis. semua Makanan Instan +10%).
    * Harga baru dibulatkan ke ratusan rupiah oleh lib/pricing.
    * Transaksi LAMA tidak berubah — mereka menyimpan snapshot harga sendiri.
