@@ -14,8 +14,14 @@ export interface CartItem {
   barcode: string | null;
   name: string;
   unit: string;
-  /** Harga saat produk dimasukkan; harga final diambil ulang saat menyimpan. */
+  /**
+   * Harga baris ini. Default = harga produk saat dimasukkan; bila kasir
+   * mengubah harga (setUnitPrice), nilai override ini yang dipakai saat
+   * menyimpan — harga master produk TIDAK ikut berubah.
+   */
   unitPrice: number;
+  /** True bila kasir mengubah harga khusus untuk transaksi ini. */
+  priceOverridden: boolean;
   quantity: number;
 }
 
@@ -25,6 +31,8 @@ interface CartContextValue {
   total: number;
   addProduct(product: Product, quantity?: number): void;
   setQuantity(productId: string, quantity: number): void;
+  /** Ubah harga HANYA untuk transaksi ini (§5A — master tidak berubah). */
+  setUnitPrice(productId: string, unitPrice: number): void;
   removeItem(productId: string): void;
   clear(): void;
 }
@@ -46,14 +54,20 @@ export function CartProvider({ children }: { children: ReactNode }) {
             name: product.name,
             unit: product.unit,
             unitPrice: product.currentPrice,
+            priceOverridden: false,
             quantity: Math.max(1, quantity),
           },
         ];
       }
+      // Produk yang sama dipilih lagi → JUMLAH bertambah (bukan baris baru).
+      // Harga khusus yang sudah diubah kasir tetap dipakai (tidak ditimpa
+      // harga master) — §5A pemisahan input produk vs finalisasi harga.
       const next = [...current];
       next[index] = {
         ...next[index],
-        unitPrice: product.currentPrice,
+        unitPrice: next[index].priceOverridden
+          ? next[index].unitPrice
+          : product.currentPrice,
         quantity: next[index].quantity + Math.max(1, quantity),
       };
       return next;
@@ -70,6 +84,20 @@ export function CartProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  const setUnitPrice = useCallback((productId: string, unitPrice: number) => {
+    setItems((current) =>
+      current.map((item) =>
+        item.productId === productId
+          ? {
+              ...item,
+              unitPrice: Math.max(0, Math.round(unitPrice)),
+              priceOverridden: true,
+            }
+          : item,
+      ),
+    );
+  }, []);
+
   const removeItem = useCallback((productId: string) => {
     setItems((current) => current.filter((item) => item.productId !== productId));
   }, []);
@@ -79,8 +107,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const value = useMemo<CartContextValue>(() => {
     const count = items.reduce((sum, item) => sum + item.quantity, 0);
     const total = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
-    return { items, count, total, addProduct, setQuantity, removeItem, clear };
-  }, [items, addProduct, setQuantity, removeItem, clear]);
+    return { items, count, total, addProduct, setQuantity, setUnitPrice, removeItem, clear };
+  }, [items, addProduct, setQuantity, setUnitPrice, removeItem, clear]);
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
 }

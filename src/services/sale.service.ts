@@ -5,10 +5,16 @@ import type { CustomerService } from "./customer.service";
 import type { ProductService } from "./product.service";
 import type { TransactionService } from "./transaction.service";
 
-/** Item yang dikirim dari keranjang kasir ke layanan penjualan. */
+/**
+ * Item yang dikirim dari keranjang kasir ke layanan penjualan.
+ * `unitPrice` opsional = harga khusus transaksi ini (§5A): bila diisi,
+ * nilainya dipakai sebagai snapshot harga transaksi dan TIDAK mengubah
+ * harga master produk. Kosong → pakai harga master terbaru.
+ */
 export interface SaleItemInput {
   productId: string;
   quantity: number;
+  unitPrice?: number;
 }
 
 export interface RecordSaleInput {
@@ -100,12 +106,20 @@ export class SaleService {
         : null,
       items: input.items.map((item) => {
         const product = productMap.get(item.productId)!;
+        const override =
+          item.unitPrice !== undefined &&
+          Number.isFinite(item.unitPrice) &&
+          item.unitPrice >= 0
+            ? Math.round(item.unitPrice)
+            : null;
         return {
           productId: product.id,
           barcode: product.barcode,
           productName: product.name,
           quantity: item.quantity,
-          unitPrice: product.currentPrice,
+          // Harga master tetap menjadi default; harga khusus transaksi
+          // hanya menjadi snapshot di transaksi ini (§5A & §9).
+          unitPrice: override ?? product.currentPrice,
         };
       }),
     });

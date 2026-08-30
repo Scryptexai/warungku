@@ -6,8 +6,8 @@ export const APP_NAME = "Warungku";
 
 /** Fase roadmap yang sedang dikerjakan saat ini. */
 export const CURRENT_PHASE = 5;
-export const CURRENT_PHASE_LABEL = "Transaksi & Mesin Penjualan";
-export const TOTAL_ROADMAP_PHASES = 8;
+export const CURRENT_PHASE_LABEL = "Input Transaksi Cepat (5A)";
+export const TOTAL_ROADMAP_PHASES = 10;
 
 /**
  * Namespace penyimpanan lokal perangkat.

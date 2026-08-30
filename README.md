@@ -7,7 +7,11 @@ bahasa Indonesia sehari-hari.
 
 ---
 
-## Status: PHASE 5 — Transaction & Sales Engine ✅
+## Status: PHASE 5A — High-Speed Transaction Input ✅
+
+> Alur transaksi disusun ulang mengikuti cara kerja warung NYATA (§5A):
+> pemilik mencatat banyak nama barang dengan cepat — harga & total
+> dihitung belakangan. Bukan alur kasir Alfamart.
 
 | Area | Status |
 | --- | --- |
@@ -26,14 +30,15 @@ bahasa Indonesia sehari-hari.
 | **Filter kategori multi-pilih + ubah harga massal (persen)** | ✅ |
 | **Penyimpanan OFFLINE-FIRST** (perangkat = database utama, Sheets = cadangan) | ✅ |
 | **PWA** — aplikasi bisa dipasang & dibuka tanpa internet | ✅ |
-| AI agent / business intelligence | ⏳ Tahap 6 (menunggu instruksi) |
+| **Input transaksi cepat SATU layar (§5A)** — cari/ketik + scan, jumlah nyambung, harga khusus transaksi | ✅ |
+| AI agent / business intelligence | ⏳ Tahap 7 (menunggu instruksi) |
 | Mock data & pengujian menyeluruh | ⏳ Tahap 7 |
 | Hardening produksi & deployment | ⏳ Tahap 8 |
 
 Alur yang sudah berjalan end-to-end:
 
 ```
-BUKA APLIKASI → SCAN BARCODE  (berlapis, offline dulu)
+BUKA APLIKASI → TRANSAKSI BARU (ketik nama ATAU scan — satu layar, §5A)
   ├─ ada di KATALOG WARUNG (perangkat) → ATUR JUMLAH → TAMBAH KE TRANSAKSI
   ├─ ada di MASTER BAWAAN (offline, ±100 produk) → HARGA & KATEGORI REKOMENDASI
   │     terisi otomatis → "TAMBAHKAN KE WARUNG SAYA" → cek harga & stok → SIMPAN
@@ -73,6 +78,38 @@ BUKA APLIKASI → SCAN BARCODE  (berlapis, offline dulu)
   Kasus lain (bingkai pratinjau, kamera dipakai aplikasi lain, kamera tidak
   ada, HTTP tidak aman) didiagnosis spesifik + tombol **Buka di Tab Baru**.
   Kode manual selalu tersedia sebagai jalur cadangan.
+
+### Transaksi cepat — SATU layar (§5A)
+
+Layar **Transaksi Baru** (tombol SCAN di navigasi bawah / Beranda) kini
+meniru alur tulis-tangan warung:
+
+```
+KETIK "ind" → ketuk hasil → MASUK DAFTAR (jumlah nyambung otomatis)
+→ ketik barang berikutnya → ketuk → …
+→ (kapan pun) ubah jumlah +/− · ubah harga baris (khusus transaksi ini)
+→ TUNAI / BON → konfirmasi → SIMPAN → transaksi berikutnya langsung
+```
+
+- **Tanpa pindah layar**: pencarian, daftar barang, jumlah, harga, dan
+  total ada di satu permukaan; input pencarian langsung fokus.
+- **1 barang ≈ 2 ketukan** (ketuk hasil; input dibersihkan & fokus otomatis).
+- **Barang sama dipilih lagi → JUMLAH bertambah** (bukan baris baru).
+- **Harga otomatis dari data produk**; tombol harga di tiap baris membuka
+  ubah harga **khusus transaksi itu** — harga master TIDAK berubah
+  (transaksi menyimpan snapshot).
+- **Scan barcode = metode kedua pada layar yang sama** (tombol Scan):
+  barang terdaftar LANGSUNG masuk daftar tanpa dialog; barcode tak
+  dikenal → kartu tambah produk (master offline → Open Food Facts →
+  manual). Strategi cakupan penuh ditangani Tahap 5B.
+- **Barang tidak ada di pencarian** → baris “+ Tambah Produk ‘xxx’”
+  (nama terisi) → simpan → otomatis masuk daftar transaksi.
+- **TUNAI / BON di footer** sejak awal; BON membuka pencarian pelanggan
+  instan; SIMPAN selalu butuh konfirmasi eksplisit.
+
+Uji otomatis (smoke 50): transaksi 30 jenis barang + harga khusus 4.321
+(master tetap) + barang berulang qty 3 (stok 50→47) + BON → buku bon
+pelanggan — semuanya lolos.
 
 ### Database master produk publik (gratis)
 
