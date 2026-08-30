@@ -23,6 +23,7 @@ export type IconName =
   | "alert"
   | "shop"
   | "barcode"
+  | "camera"
   | "plus"
   | "user"
   | "search"
@@ -138,6 +139,12 @@ const ICON_PATHS: Record<IconName, ReactNode> = {
       <path d="M11 8v8" />
       <path d="M14 8v8" />
       <path d="M17 8v8" />
+    </>
+  ),
+  camera: (
+    <>
+      <path d="M3 8a2 2 0 0 1 2-2h2.5l1.2-1.8a1 1 0 0 1 .83-.45h5.44a1 1 0 0 1 .83.45L17 6H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      <circle cx="12" cy="12.5" r="3.5" />
     </>
   ),
   plus: <path d="M12 5v14M5 12h14" />,

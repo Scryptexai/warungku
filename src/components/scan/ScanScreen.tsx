@@ -51,11 +51,15 @@ export function ScanScreen() {
   const handleCode = useCallback(
     async (code: string) => {
       const product = await products.getProductByBarcode(code);
-      setScanResult(
-        product ? { kind: "found", product } : { kind: "not-found", barcode: code },
-      );
+      if (product) {
+        setScanResult({ kind: "found", product });
+        return;
+      }
+      // Produk belum terdaftar → langsung buka form Tambah Produk (alur scan)
+      // dengan barcode terisi otomatis. Tanpa langkah konfirmasi tambahan.
+      router.push(`/produk/tambah?barcode=${encodeURIComponent(code)}&alur=scan`);
     },
-    [products],
+    [products, router],
   );
 
   // Produk baru dari alur scan (?added=<id>) → langsung masuk keranjang.

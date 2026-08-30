@@ -178,14 +178,28 @@ export function ScannerView({
           zxing.BarcodeFormat.CODE_39,
           zxing.BarcodeFormat.ITF,
         ];
-        const hints = new Map<DecodeHintType, BarcodeFormat[]>();
+        const hints = new Map<DecodeHintType, unknown>();
         hints.set(zxing.DecodeHintType.POSSIBLE_FORMATS, formats);
+        // TRY_HARDER: baca barcode lebih teliti (buram, miring, kurang cahaya).
+        hints.set(zxing.DecodeHintType.TRY_HARDER, true);
         const reader = new BrowserMultiFormatReader(hints, {
           delayBetweenScanAttempts: 150,
         });
 
+        // Minta resolusi tinggi + kamera belakang. Barcode ritel (EAN-13)
+        // bergaris tipis; stream bawaan 640x480 sering terlalu kasar untuk
+        // dibaca — 1280x720 jauh lebih andal untuk deteksi.
+        const constraints: MediaStreamConstraints = {
+          audio: false,
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+        };
+
         const controls = await reader.decodeFromConstraints(
-          { audio: false, video: { facingMode: { ideal: "environment" } } },
+          constraints,
           video,
           (result) => {
             if (cancelled || handledRef.current) return;
@@ -205,6 +219,23 @@ export function ScannerView({
         }
         controlsRef.current = controls;
         setStatus("scanning");
+
+        // Aktifkan fokus otomatis berkelanjutan bila perangkat mendukung,
+        // supaya barcode cepat tajam. Diabaikan diam-diam bila tak didukung.
+        try {
+          const stream = video.srcObject as MediaStream | null;
+          const track = stream?.getVideoTracks?.()[0];
+          const caps = track?.getCapabilities?.() as
+            | { focusMode?: string[] }
+            | undefined;
+          if (track && caps?.focusMode?.includes("continuous")) {
+            await track.applyConstraints({
+              advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet],
+            });
+          }
+        } catch {
+          // Perangkat tanpa kontrol fokus — lewati.
+        }
       } catch (error) {
         if (cancelled) return;
         console.warn("[warungku] Kamera tidak bisa dibuka:", error);
