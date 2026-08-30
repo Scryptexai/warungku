@@ -64,9 +64,9 @@ export const QUICK_ACCESS_ITEMS: NavItem[] = [
     phase: 2,
   },
   {
-    href: "/scan?pay=bon",
-    label: "Catat Bon",
-    description: "Jual tanpa tunai, catat piutang",
+    href: "/bon",
+    label: "Bayar Bon",
+    description: "Lihat & lunasi piutang pelanggan",
     icon: "receipt",
     phase: 4,
   },

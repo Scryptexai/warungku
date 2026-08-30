@@ -108,6 +108,48 @@ export class CustomerService {
     return next;
   }
 
+  /**
+   * PELUNASAN — kurangi saldo piutang pelanggan. Dipakai dari halaman
+   * /bon saat pelanggan membayar (sebagian atau lunas). Idempotent dalam
+   * satu sesi: amount = min(jumlah, outstandingBalance); negatif = error.
+   * Tidak membuat transaksi barang — fokusnya hanya pergerakan piutang.
+   * Sync Sheets via antrean CUSTOMER UPDATE.
+   */
+  async settleOutstanding(id: string, amount: number): Promise<Customer> {
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new ValidationError("Jumlah pelunasan harus lebih dari 0.", {
+        field: "amount",
+      });
+    }
+    const customers = await this.localStore.getCachedCustomers();
+    const index = customers.findIndex((customer) => customer.id === id);
+    if (index === -1) {
+      throw new NotFoundError(`Pelanggan "${id}" tidak ditemukan pada data lokal.`);
+    }
+    const current = customers[index];
+    if (current.outstandingBalance <= 0) {
+      throw new ValidationError("Pelanggan ini tidak punya bon aktif.", {
+        field: "amount",
+      });
+    }
+    const settled = Math.min(current.outstandingBalance, Math.round(amount));
+    const next: Customer = {
+      ...current,
+      outstandingBalance: Math.max(0, current.outstandingBalance - settled),
+      updatedAt: nowISO(),
+    };
+    customers[index] = next;
+    await this.localStore.setCachedCustomers(customers);
+    await this.syncEngine.enqueue({
+      id: createPrefixedId("op"),
+      kind: "UPDATE",
+      entity: "CUSTOMER",
+      payload: next,
+      createdAt: next.updatedAt,
+    });
+    return next;
+  }
+
   async createCustomer(input: CreateCustomerInput): Promise<Customer> {
     const name = input.name?.trim() ?? "";
     if (!name) {
