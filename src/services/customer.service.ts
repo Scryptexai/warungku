@@ -6,6 +6,7 @@ import type {
 import type { LocalStore } from "@/data/local/local-store";
 import type { StoreDataRepository } from "@/data/store-data-repository";
 import type { SyncEngine } from "@/sync/sync-engine";
+import type { TransactionService } from "./transaction.service";
 import { nowISO } from "@/lib/datetime";
 import { NotFoundError, ValidationError } from "@/lib/errors";
 import { createPrefixedId } from "@/lib/id";
@@ -27,11 +28,25 @@ export class CustomerService {
   private readonly repository: StoreDataRepository;
   private readonly localStore: LocalStore;
   private readonly syncEngine: SyncEngine;
+  /**
+   * TransactionService di-suntik belakangan (lihat attachTransactionService)
+   * untuk memutus siklus dependensi dengan TransactionService yang dipakai
+   * untuk mencatat pelunasan sebagai transaksi CASH.
+   */
+  private transactions: TransactionService | null = null;
 
   constructor(deps: CustomerServiceDeps) {
     this.repository = deps.repository;
     this.localStore = deps.localStore;
     this.syncEngine = deps.syncEngine;
+  }
+
+  /**
+   * Dipanggil dari composition root (services/container.ts) setelah
+   * TransactionService dibuat. Idempotent: pemanggilan kedua menimpa.
+   */
+  attachTransactionService(transactions: TransactionService): void {
+    this.transactions = transactions;
   }
 
   async listCustomers(options: { refresh?: boolean } = {}): Promise<Customer[]> {
@@ -148,6 +163,78 @@ export class CustomerService {
       createdAt: next.updatedAt,
     });
     return next;
+  }
+
+  /**
+   * PELUNASAN BON — sama dengan settleOutstanding, TETAPI juga mencatat
+   * transaksi CASH dengan penanda 'Bayar Bon' sehingga muncul di
+   * /transaksi dan dihitung di /laporan sebagai cashRevenue.
+   *
+   * Urutan: catat transaksi DULU, baru kurangi piutang. Bila transaksi
+   * gagal, piutang tidak berubah (aman untuk refresh/kegagalan jaringan).
+   * Bila kurangi piutang gagal setelah transaksi tercatat, kita rollback
+   * dengan menandai transaksi VOIDED — supaya jejak audit konsisten.
+   */
+  async settleBon(
+    id: string,
+    amount: number,
+  ): Promise<{ customer: Customer; transaction: { id: string; total: number; note: string | null } }> {
+    if (!this.transactions) {
+      throw new ValidationError(
+        "Layanan pelunasan belum terpasang. Coba muat ulang halaman.",
+        { field: "transactions" },
+      );
+    }
+    const customers = await this.localStore.getCachedCustomers();
+    const index = customers.findIndex((customer) => customer.id === id);
+    if (index === -1) {
+      throw new NotFoundError(`Pelanggan "${id}" tidak ditemukan pada data lokal.`);
+    }
+    const current = customers[index];
+    if (current.outstandingBalance <= 0) {
+      throw new ValidationError("Pelanggan ini tidak punya bon aktif.", {
+        field: "amount",
+      });
+    }
+    const settled = Math.min(current.outstandingBalance, Math.round(amount));
+
+    // 1) Catat transaksi CASH settlement DULU.
+    const transaction = await this.transactions.createSettlement(
+      { id: current.id, name: current.name },
+      settled,
+    );
+
+    try {
+      // 2) Kurangi piutang.
+      const next: Customer = {
+        ...current,
+        outstandingBalance: Math.max(0, current.outstandingBalance - settled),
+        updatedAt: nowISO(),
+      };
+      customers[index] = next;
+      await this.localStore.setCachedCustomers(customers);
+      await this.syncEngine.enqueue({
+        id: createPrefixedId("op"),
+        kind: "UPDATE",
+        entity: "CUSTOMER",
+        payload: next,
+        createdAt: next.updatedAt,
+      });
+      return { customer: next, transaction };
+    } catch (error) {
+      // Rollback tanda transaksi VOIDED agar jejak audit konsisten.
+      // (transaksi sudah terlanjur dibuat, tapi kita tandai tidak valid.)
+      try {
+        await this.localStore.upsertTransaction({
+          ...transaction,
+          status: "VOIDED",
+        });
+      } catch {
+        // Gagal rollback pun — jangan swallow error utama. Log & lanjut.
+        console.warn("[warungku] Gagal rollback settlement setelah error:", error);
+      }
+      throw error;
+    }
   }
 
   async createCustomer(input: CreateCustomerInput): Promise<Customer> {

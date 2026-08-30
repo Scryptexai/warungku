@@ -68,14 +68,19 @@ export function BonScreen() {
     setSettleBusy(true);
     setSettleReport(null);
     try {
-      const updated = await customerService.settleOutstanding(opened.id, amount);
+      const { customer: updated } = await customerService.settleBon(
+        opened.id,
+        amount,
+      );
+      // Muat ulang local store agar /transaksi & /laporan tahu tentang
+      // transaksi settlement baru.
       await reloadLocal();
       const settled = opened.outstandingBalance - updated.outstandingBalance;
       setOpened(updated);
       setSettleReport(
         updated.outstandingBalance === 0
-          ? `✓ Lunas. ${formatIDR(settled)} diterima.`
-          : `✓ ${formatIDR(settled)} diterima. Sisa ${formatIDR(updated.outstandingBalance)}.`,
+          ? `✓ Lunas. ${formatIDR(settled)} diterima — tercatat di /transaksi.`
+          : `✓ ${formatIDR(settled)} diterima — tercatat di /transaksi. Sisa ${formatIDR(updated.outstandingBalance)}.`,
       );
       if (updated.outstandingBalance > 0) {
         setSettleAmount(String(updated.outstandingBalance));

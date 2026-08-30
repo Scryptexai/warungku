@@ -14,6 +14,7 @@ import { ProductService } from "./product.service";
 import { SaleService } from "./sale.service";
 import { SyncService } from "./sync.service";
 import { TransactionService } from "./transaction.service";
+import type { CustomerService as CustomerServiceType } from "./customer.service";
 
 /**
  * AKAR KOMPOSISI (composition root) Warungku.
@@ -67,6 +68,11 @@ export function createAppContainer(
   // engine, engine butuh penanda) lewat closure; hanya dipanggil runtime.
   let transactionsService: TransactionService | null = null;
 
+  // CustomerService butuh TransactionService untuk catat pelunasan sebagai
+  // transaksi CASH ('Bayar Bon'). Forward-reference diselesaikan via closure
+  // yang di-resolve setelah TransactionService dibuat di bawah.
+  let customerService: CustomerServiceType | null = null;
+
   const syncEngine =
     overrides.syncEngine ??
     new QueueSyncEngine({
@@ -91,6 +97,9 @@ export function createAppContainer(
     syncEngine,
     repository,
   });
+  // Suntikkan TransactionService ke CustomerService (untuk pelunasan).
+  customers.attachTransactionService(transactionsService);
+  customerService = customers;
   const transactions = transactionsService;
 
   return {
@@ -102,6 +111,6 @@ export function createAppContainer(
     products,
     customers,
     transactions,
-    sales: new SaleService(products, transactions, customers, syncEngine),
+    sales: new SaleService(products, transactions, customerService!, syncEngine),
   };
 }

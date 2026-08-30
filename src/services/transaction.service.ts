@@ -140,6 +140,49 @@ export class TransactionService {
   }
 
   /**
+   * PELUNASAN BON — catat sebagai transaksi CASH dengan penanda 'Bayar Bon'
+   * sehingga muncul di /transaksi dan /laporan. Items kosong (bukan barang)
+   * — Sheets hanya append TRANSACTIONS header, tanpa TRANSACTION_ITEMS.
+   * total = nominal pelunasan. Pelanggan tetap di-snapshot di kolom customer.
+   *
+   * Idempotency: dipanggil dari CustomerService.settleBon dalam satu
+   * transaksi Sheets — bila gagal, state piutang tidak berubah.
+   */
+  async createSettlement(
+    customer: { id: string; name: string },
+    amount: number,
+  ): Promise<Transaction> {
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new ValidationError("Nominal pelunasan harus lebih dari 0.", {
+        field: "amount",
+      });
+    }
+    const timestamp = nowISO();
+    const transactionId = createPrefixedId("trx");
+    const total = Math.round(amount);
+    const transaction: Transaction = {
+      id: transactionId,
+      timestamp,
+      customer: { id: customer.id, name: customer.name },
+      paymentType: "CASH",
+      total,
+      status: "COMPLETED",
+      items: [],
+      note: `Bayar Bon: ${customer.name}`,
+      syncedAt: null,
+    };
+    await this.localStore.upsertTransaction(transaction);
+    await this.syncEngine.enqueue({
+      id: createPrefixedId("op"),
+      kind: "CREATE",
+      entity: "TRANSACTION",
+      payload: transaction,
+      createdAt: timestamp,
+    });
+    return transaction;
+  }
+
+  /**
    * Setelah Google Sheets menerima transaksi: TANDAI synced, JANGAN hapus.
    * Riwayat di perangkat tetap lengkap — Sheets hanyalah cadangan.
    */
