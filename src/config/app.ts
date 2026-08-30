@@ -6,7 +6,7 @@ export const APP_NAME = "Warungku";
 
 /** Fase roadmap yang sedang dikerjakan saat ini. */
 export const CURRENT_PHASE = 5;
-export const CURRENT_PHASE_LABEL = "Input Transaksi Cepat (5A)";
+export const CURRENT_PHASE_LABEL = "Mesin Transaksi Offline-First (5B)";
 export const TOTAL_ROADMAP_PHASES = 10;
 
 /**

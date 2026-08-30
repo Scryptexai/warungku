@@ -239,11 +239,10 @@ async function main(): Promise<void> {
     paymentType: "CASH",
   });
   check(cashSale.transaction.total === 10500, "TUNAI: total benar (3 × 3500 = 10500)");
-  check((await products.getProductById(indomie.id))?.stock === 47, "TUNAI: stok berkurang 50 → 47");
-  check(
-    cashSale.sync.failed === 0 && (await localStore.getSyncQueue()).length === 0,
-    "TUNAI: tersinkron ke Google Sheets (antrean kosong)",
-  );
+  check((await products.getProductById(indomie.id))?.stock === 47, "TUNAI: stok berkurang 50 → 47 (LOKAL, tanpa internet)");
+  // §5B: recordSale tidak menunggu Sheets — flush eksplisit untuk assertion.
+  await engine.syncNow();
+  check((await localStore.getSyncQueue()).length === 0, "TUNAI: tersinkron ke Google Sheets (antrean kosong)");
   const trxRows = fakeClient.sheets.get(SHEET_NAMES.transactions) ?? [];
   check(trxRows.length === 1 && trxRows[0][3] === "CASH" && trxRows[0][5] === "10500", "TRANSACTIONS: baris tunai + total benar");
   const itemRows = fakeClient.sheets.get(SHEET_NAMES.transactionItems) ?? [];
@@ -293,6 +292,7 @@ async function main(): Promise<void> {
     customerName: "Pak Budi",
   });
   check(trxBon.transaction.total === 8000, "BON: total memakai harga TERBARU (2 × 4000 = 8000)");
+  await engine.syncNow();
   const itemRowsAfter = fakeClient.sheets.get(SHEET_NAMES.transactionItems) ?? [];
   check(itemRowsAfter[0][5] === "3500" && itemRowsAfter[1][5] === "4000", "harga historis tetap benar (lama 3500, baru 4000)");
   const customerRows1 = fakeClient.sheets.get(SHEET_NAMES.customers) ?? [];
@@ -312,6 +312,7 @@ async function main(): Promise<void> {
     paymentType: "BON",
     customerName: "Pak Budi",
   });
+  await engine.syncNow(); // §5B: recordSale non-blocking → flush sebelum baca sheet
   const customerRows2 = fakeClient.sheets.get(SHEET_NAMES.customers) ?? [];
   check(
     customerRows2.length === 1 &&
@@ -321,6 +322,7 @@ async function main(): Promise<void> {
   );
 
   // Stok di sheet konsisten dengan transaksi.
+  await engine.syncNow();
   const finalRows = (fakeClient.sheets.get(SHEET_NAMES.products) ?? []).slice(1);
   const indomieRow = finalRows.find((row) => row[1] === indomie.barcode);
   check(indomieRow?.[5] === "45", "PRODUCTS: stok akhir di sheet = 45 (50 − 3 − 2)");
@@ -528,11 +530,119 @@ async function main(): Promise<void> {
     "5A: riwayat transaksi lokal memuat transaksi besar & bon",
   );
 
+  // ================================================== TAHAP 5B
+  console.log("6) UJI PENERIMAAN TAHAP 5B — MESIN TRANSAKSI OFFLINE-FIRST");
+  // Perangkat 5B: store lokal + layanan sendiri, engine OFFLINE (NotConnected).
+  const store5b = new MemoryLocalStore();
+  const repoOff = new GoogleSheetsStoreRepository(new NotConnectedGoogleApiClient());
+  const engineOff = new QueueSyncEngine({ target: new NotConnectedSyncTarget(), localStore: store5b, listenToNetworkEvents: false });
+  await engineOff.init();
+  const products5b = new ProductService({ repository: repoOff, localStore: store5b, syncEngine: engineOff });
+  const customers5b = new CustomerService({ repository: repoOff, localStore: store5b, syncEngine: engineOff });
+  const transactions5b = new TransactionService({ localStore: store5b, syncEngine: engineOff, repository: repoOff });
+  const sales5b = new SaleService(products5b, transactions5b, customers5b, engineOff);
+  const beras = await products5b.createProduct({ name: "Beras 5kg", barcode: "8996660000011", category: "Bahan Masak", currentPrice: 68000, stock: 100, unit: "pack" });
+  const telur = await products5b.createProduct({ name: "Telur 1kg", barcode: "8996660000028", category: "Bahan Masak", currentPrice: 28000, stock: 100, unit: "kg" });
+
+  // TEST 2+3 — OFFLINE: 5 transaksi (4 tunai + 1 bon) tanpa internet.
+  for (let i = 0; i < 4; i += 1) {
+    await sales5b.recordSale({ items: [{ productId: beras.id, quantity: 1 }], paymentType: "CASH" });
+  }
+  await sales5b.recordSale({ items: [{ productId: telur.id, quantity: 2 }], paymentType: "BON", customerName: "Pak Off" });
+  const lokal5b = await transactions5b.listTransactions();
+  check(lokal5b.length === 5, "5B TEST 2/3: 5 transaksi tersimpan LOKAL saat offline");
+  check(lokal5b.every((t) => t.syncedAt === null), "5B TEST 3: semua berstatus PENDING (belum sinkron)");
+  const queue5b = await store5b.getSyncQueue();
+  check(queue5b.length >= 5, `5B TEST 3: antrean sync terisi (${queue5b.length} operasi), tidak ada data hilang`);
+  check((await products5b.getProductById(telur.id))?.stock === 98, "5B: stok LOKAL berkurang offline (100 → 98) tanpa menunggu Sheets");
+
+  // TEST 8 — OFFLINE BON: saldo bon pelanggan diperbarui lokal.
+  const pakOff = (await customers5b.searchCustomers("pak off"))[0]!;
+  check(pakOff.outstandingBalance === 56000, "5B TEST 8: BON offline → saldo bon pelanggan lokal 56000");
+
+  // TEST 6 — RESTART: engine dibuang & dibuat ulang (crash); antrean dipulihkan.
+  const queueSebelum = (await store5b.getSyncQueue()).slice();
+  await store5b.replaceSyncItem({ ...queueSebelum[0]!, status: "IN_PROGRESS", updatedAt: new Date().toISOString() });
+  const engineOff2 = new QueueSyncEngine({ target: new NotConnectedSyncTarget(), localStore: store5b, listenToNetworkEvents: false });
+  await engineOff2.init(); // pemulihan: IN_PROGRESS → PENDING
+  const queueSetelah = await store5b.getSyncQueue();
+  check(queueSetelah.length === queueSebelum.length, "5B TEST 6: antrean bertahan setelah 'restart' aplikasi");
+  check(queueSetelah.every((item) => item.status !== "IN_PROGRESS"), "5B TEST 6: item IN_PROGRESS dipulihkan ke PENDING");
+
+  // TEST 5 — SYNC FAILURE: target gagal → transaksi tetap ada, retry tercatat.
+  const failing5b: SyncTarget = {
+    isReady: async () => true,
+    push: async () => { throw new Error("jaringan mati"); },
+  };
+  const engineFail5b = new QueueSyncEngine({ target: failing5b, localStore: store5b, listenToNetworkEvents: false });
+  await engineFail5b.init();
+  const failSummary = await engineFail5b.syncNow();
+  const queueFail = await store5b.getSyncQueue();
+  check(failSummary.failed > 0 && queueFail.length === queueSebelum.length, "5B TEST 5: gagal kirim → antrean TIDAK kosong (data aman)");
+  check(queueFail.some((item) => item.attempts >= 1), "5B TEST 5: percobaan ulang tercatat (attempts + lastError)");
+  check((await transactions5b.listTransactions()).length === 5, "5B TEST 5: transaksi tetap tersedia lokal setelah gagal sync");
+
+  // TEST 4+1 — RECONNECT: internet kembali → sinkronisasi otomatis-ish (manual trigger) semua SYNCED.
+  const fake5b = new FakeSheetsClient();
+  const target5b = new GoogleSheetsSyncTarget(fake5b, async () => "sheet-5b");
+  // Hook yang sama dengan composition root: TRANSAKSI sukses → tandai
+  // synced di database lokal (transaksi TIDAK dihapus).
+  const engineOn5b = new QueueSyncEngine({
+    target: target5b,
+    localStore: store5b,
+    listenToNetworkEvents: false,
+    onOperationSynced: (operation) => {
+      if (operation.entity === "TRANSACTION" && operation.kind === "CREATE") {
+        const payload = operation.payload as { id?: string } | null;
+        if (payload?.id) return transactions5b.markSynced(payload.id);
+      }
+      return undefined;
+    },
+  });
+  await engineOn5b.init();
+  const reconnect = await engineOn5b.syncNow();
+  check(reconnect.succeeded === queueSebelum.length && reconnect.failed === 0, "5B TEST 4: online kembali → seluruh antrean terkirim");
+  check((await store5b.getSyncQueue()).length === 0, "5B TEST 4: antrean kosong setelah sinkron");
+  const rows5b = fake5b.sheets.get(SHEET_NAMES.transactions) ?? [];
+  check(rows5b.length === 5, "5B TEST 1/4: Google Sheets menerima 5 transaksi");
+  const lokal5bAfter = await transactions5b.listTransactions();
+  check(lokal5bAfter.every((t) => t.syncedAt !== null), "5B TEST 4: kelima transaksi berstatus SYNCED (tidak terhapus)");
+
+  // TEST 7 — DUPLICATE RETRY: push ulang transaksi yang sama → tetap 1 baris.
+  const dupTrx = lokal5bAfter[0]!;
+  const rowsBefore = (fake5b.sheets.get(SHEET_NAMES.transactions) ?? []).length;
+  await target5b.push({ id: "op5b-dup", kind: "CREATE", entity: "TRANSACTION", payload: dupTrx, createdAt: new Date().toISOString() });
+  await target5b.push({ id: "op5b-dup2", kind: "CREATE", entity: "TRANSACTION", payload: dupTrx, createdAt: new Date().toISOString() });
+  check((fake5b.sheets.get(SHEET_NAMES.transactions) ?? []).length === rowsBefore, "5B TEST 7: retry dobel tidak menduplikasi transaksi (idempotent by id)");
+
+  // PERFORMANCE — commit lokal tidak menunggu jaringan (target lambat 150ms).
+  const storeSlow = new MemoryLocalStore();
+  const slowTarget: SyncTarget = {
+    isReady: async () => true,
+    push: () => new Promise<void>((resolve) => { setTimeout(resolve, 150); }),
+  };
+  const engineSlow = new QueueSyncEngine({ target: slowTarget, localStore: storeSlow, listenToNetworkEvents: false });
+  await engineSlow.init();
+  const productsSlow = new ProductService({ repository: repoOff, localStore: storeSlow, syncEngine: engineSlow });
+  const salesSlow = new SaleService(
+    productsSlow,
+    new TransactionService({ localStore: storeSlow, syncEngine: engineSlow, repository: repoOff }),
+    new CustomerService({ repository: repoOff, localStore: storeSlow, syncEngine: engineSlow }),
+    engineSlow,
+  );
+  const produkSlow = await productsSlow.createProduct({ name: "Sabun 5B", barcode: "8996660000035", category: "Kebutuhan Rumah", currentPrice: 5000, stock: 10, unit: "pcs" });
+  const t0 = Date.now();
+  const slowSale = await salesSlow.recordSale({ items: [{ productId: produkSlow.id, quantity: 1 }], paymentType: "CASH" });
+  const commitMs = Date.now() - t0;
+  check(slowSale.transaction.syncedAt === null && commitMs < 150, "5B PERFORMANCE: transaksi selesai SEBELUM respons lambat jaringan (commit lokal = sukses)");
+  await engineSlow.syncNow();
+  check((await storeSlow.getSyncQueue()).length === 0, "5B PERFORMANCE: latar belakang menyelesaikan pengiriman setelahnya");
+
   if (failures > 0) {
     console.error(`\nGAGAL: ${failures} pemeriksaan tidak lolos.`);
     process.exit(1);
   }
-  console.log("\nSemua pemeriksaan lolos — alur transaksi Tahap 3 + 5A berfungsi (lokal + Google Sheets).");
+  console.log("\nSemua pemeriksaan lolos — alur transaksi Tahap 3 + 5A + 5B berfungsi (lokal + Google Sheets).");
 }
 
 main().catch((error: unknown) => {

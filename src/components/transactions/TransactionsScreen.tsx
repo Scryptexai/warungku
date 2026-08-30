@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useApp } from "@/components/providers/AppProviders";
 import { useCatalog } from "@/components/providers/CatalogProvider";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Icon } from "@/components/ui/icons";
 import { LinkButton } from "@/components/ui/LinkButton";
-import type { Transaction } from "@/domain";
+import type { SyncQueueItem, Transaction } from "@/domain";
 import { formatIDR } from "@/lib/money";
 import { cn } from "@/lib/cn";
 
@@ -21,14 +22,43 @@ function formatTime(iso: string): string {
   }).format(new Date(iso));
 }
 
-/** Lencana status sinkron per transaksi (offline-first). */
-function SyncBadge({ syncedAt }: { syncedAt: string | null }) {
-  return syncedAt ? (
-    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-brand-600">
-      <Icon name="check" className="h-3 w-3" />
-      Tersimpan
-    </span>
-  ) : (
+/**
+ * Lencana status sinkron per transaksi (§5B):
+ * SYNCED → Tersimpan · SYNCING → Sinkron… · FAILED → gagal kirim, menunggu
+ * ulang · PENDING → menunggu sinkron. Semuanya non-blocking.
+ */
+function SyncBadge({
+  syncedAt,
+  queueItem,
+}: {
+  syncedAt: string | null;
+  queueItem?: SyncQueueItem;
+}) {
+  if (syncedAt) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-brand-600">
+        <Icon name="check" className="h-3 w-3" />
+        Tersinkron
+      </span>
+    );
+  }
+  if (queueItem?.status === "IN_PROGRESS") {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-brand-600">
+        <Icon name="sync" className="h-3 w-3 animate-spin" />
+        Sinkron…
+      </span>
+    );
+  }
+  if ((queueItem?.attempts ?? 0) > 0) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-500">
+        <Icon name="alert" className="h-3 w-3" />
+        Gagal kirim — dicoba ulang
+      </span>
+    );
+  }
+  return (
     <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-600">
       <Icon name="sync" className="h-3 w-3" />
       Menunggu sinkron
@@ -38,9 +68,11 @@ function SyncBadge({ syncedAt }: { syncedAt: string | null }) {
 
 function TransactionRow({
   transaction,
+  queueItem,
   onOpen,
 }: {
   transaction: Transaction;
+  queueItem?: SyncQueueItem;
   onOpen: () => void;
 }) {
   const isBon = transaction.paymentType === "BON";
@@ -74,7 +106,7 @@ function TransactionRow({
         <span className="block text-sm font-bold text-stone-900">
           {formatIDR(transaction.total)}
         </span>
-        <SyncBadge syncedAt={transaction.syncedAt} />
+        <SyncBadge syncedAt={transaction.syncedAt} queueItem={queueItem} />
       </span>
     </button>
   );
@@ -83,9 +115,11 @@ function TransactionRow({
 /** Struk detail transaksi — dibaca dari data perangkat, tanpa internet. */
 function TransactionDetailSheet({
   transaction,
+  queueItem,
   onClose,
 }: {
   transaction: Transaction;
+  queueItem?: SyncQueueItem;
   onClose: () => void;
 }) {
   return (
@@ -129,7 +163,7 @@ function TransactionDetailSheet({
           <div className="flex justify-between">
             <dt>Status penyimpanan</dt>
             <dd>
-              <SyncBadge syncedAt={transaction.syncedAt} />
+              <SyncBadge syncedAt={transaction.syncedAt} queueItem={queueItem} />
             </dd>
           </div>
         </dl>
@@ -179,13 +213,43 @@ function TransactionDetailSheet({
  */
 export function TransactionsScreen() {
   const { transactions, ensureLocal } = useCatalog();
+  const { sync } = useApp();
   const [tab, setTab] = useState<Tab>("Semua");
   const [query, setQuery] = useState("");
   const [opened, setOpened] = useState<Transaction | null>(null);
+  const [queue, setQueue] = useState<SyncQueueItem[]>([]);
 
   useEffect(() => {
     void ensureLocal();
   }, [ensureLocal]);
+
+  // Antrean sinkron per transaksi (badge PENDING/SYNCING/FAILED) —
+  // diperbarui setiap kali status engine berubah.
+  useEffect(() => {
+    let active = true;
+    const load = (): void => {
+      void sync.getQueue().then((items) => {
+        if (active) setQueue(items);
+      });
+    };
+    load();
+    const unsubscribe = sync.subscribe(load);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [sync]);
+
+  const queueByTransaction = useMemo(() => {
+    const map = new Map<string, SyncQueueItem>();
+    for (const item of queue) {
+      const payload = item.operation.payload as { id?: string } | null;
+      if (item.operation.entity === "TRANSACTION" && payload?.id) {
+        map.set(payload.id, item);
+      }
+    }
+    return map;
+  }, [queue]);
 
   const filtered = useMemo(() => {
     if (transactions === null) return null;
@@ -289,6 +353,7 @@ export function TransactionsScreen() {
             <TransactionRow
               key={transaction.id}
               transaction={transaction}
+              queueItem={queueByTransaction.get(transaction.id)}
               onOpen={() => setOpened(transaction)}
             />
           ))
@@ -304,6 +369,7 @@ export function TransactionsScreen() {
       {opened ? (
         <TransactionDetailSheet
           transaction={opened}
+          queueItem={queueByTransaction.get(opened.id)}
           onClose={() => setOpened(null)}
         />
       ) : null}

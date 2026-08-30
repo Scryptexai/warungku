@@ -7,7 +7,7 @@ bahasa Indonesia sehari-hari.
 
 ---
 
-## Status: PHASE 5A — High-Speed Transaction Input ✅
+## Status: PHASE 5B — Offline-First Transaction Engine ✅
 
 > Alur transaksi disusun ulang mengikuti cara kerja warung NYATA (§5A):
 > pemilik mencatat banyak nama barang dengan cepat — harga & total
@@ -31,6 +31,7 @@ bahasa Indonesia sehari-hari.
 | **Penyimpanan OFFLINE-FIRST** (perangkat = database utama, Sheets = cadangan) | ✅ |
 | **PWA** — aplikasi bisa dipasang & dibuka tanpa internet | ✅ |
 | **Input transaksi cepat SATU layar (§5A)** — cari/ketik + scan, jumlah nyambung, harga khusus transaksi | ✅ |
+| **Mesin transaksi OFFLINE-FIRST (§5B)** — commit lokal = sukses; Sheets hanya tujuan sinkron | ✅ |
 | AI agent / business intelligence | ⏳ Tahap 7 (menunggu instruksi) |
 | Mock data & pengujian menyeluruh | ⏳ Tahap 7 |
 | Hardening produksi & deployment | ⏳ Tahap 8 |
@@ -78,6 +79,40 @@ BUKA APLIKASI → TRANSAKSI BARU (ketik nama ATAU scan — satu layar, §5A)
   Kasus lain (bingkai pratinjau, kamera dipakai aplikasi lain, kamera tidak
   ada, HTTP tidak aman) didiagnosis spesifik + tombol **Buka di Tab Baru**.
   Kode manual selalu tersedia sebagai jalur cadangan.
+
+### Mesin transaksi offline-first (§5B)
+
+**Commit lokal = keberhasilan transaksi.** `recordSale` tidak pernah menunggu
+respons Google Sheets — setelah validasi → tulis transaksi & item ke database
+perangkat → potong stok lokal → antre sinkron → **sukses** (±milidetik,
+tanpa jaringan). Pengiriman ke Sheets berjalan di latar belakang.
+
+```
+MOBILE APP → DATABASE LOKAL → TRANSAKSI BERHASIL → ANTREAN SYNC
+                                          ↓ (internet ada, di latar belakang)
+                                    GOOGLE SHEETS → SYNCED
+```
+
+- **Status per transaksi** di layar Transaksi: `Tersinkron` / `Sinkron…` /
+  `Gagal kirim — dicoba ulang` / `Menunggu sinkron` (PENDING·SYNCING·SYNCED·FAILED).
+- **Panel hasil transaksi**: selalu “✓ Transaksi tersimpan (di perangkat)” +
+  baris status sinkron terpisah + tombol “Kirim Sekarang” bila menunggu.
+- **Retry aman**: idempotent by transaction_id — kirim ulang tidak pernah
+  menduplikasi baris; antrean bertahan setelah aplikasi ditutup/HP mati;
+  item `IN_PROGRESS` dipulihkan ke `PENDING` saat aplikasi dibuka lagi.
+- **Gagal kirim ≠ transaksi gagal**: data tetap lokal, terlihat, dan
+  dikirim ulang otomatis saat online (event `online` / tombol Sinkronkan).
+- **Offline penuh**: cari produk & pelanggan lokal, tambah produk, ubah
+  jumlah/harga, CASH, BON (saldo bon pelanggan diperbarui lokal), simpan,
+  potong stok, lihat riwayat — semua tanpa internet.
+- **Sinkron awal (perangkat baru)**: Sheets → merge by ID → lokal; setelah
+  itu lokal menjadi sumber operasional perangkat itu.
+
+Uji otomatis (smoke 67) — TEST 1–8 §5B: online; offline ×5 transaksi;
+reconnect (5 SYNCED, tanpa duplikat); kegagalan remote (antrean aman +
+attempts tercatat); restart engine (antrean pulih, IN_PROGRESS→PENDING);
+retry dobel (idempotent); BON offline (saldo lokal); dan commit lokal
+terbukti selesai SEBELUM respons jaringan lambat 150 ms.
 
 ### Transaksi cepat — SATU layar (§5A)
 

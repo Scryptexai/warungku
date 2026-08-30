@@ -1,4 +1,4 @@
-import type { PaymentType, Product, SyncRunSummary, Transaction } from "@/domain";
+import type { PaymentType, Product, SyncState, Transaction } from "@/domain";
 import type { SyncEngine } from "@/sync/sync-engine";
 import { ValidationError } from "@/lib/errors";
 import type { CustomerService } from "./customer.service";
@@ -26,8 +26,12 @@ export interface RecordSaleInput {
 
 export interface RecordSaleResult {
   transaction: Transaction;
-  /** Hasil percobaan kirim ke Google Sheets (bisa gagal → tetap di antrean). */
-  sync: SyncRunSummary;
+  /**
+   * §5B: status sinkron SESAAT SETELAH commit lokal. Pengiriman ke Google
+   * Sheets berjalan di latar belakang dan TIDAK menunda keberhasilan
+   * transaksi — commit lokal adalah source of truth.
+   */
+  sync: { state: SyncState; queuedCount: number };
   /** Stok produk setelah pengurangan. */
   stockUpdates: Array<{ product: Product; newStock: number }>;
 }
@@ -138,9 +142,17 @@ export class SaleService {
       await this.customers.addToOutstanding(customerRecord.id, transaction.total);
     }
 
-    // 4) Coba kirim sekarang; gagal → tetap di antrean & dicoba ulang.
-    const sync = await this.syncEngine.syncNow();
+    // 4) §5B: kirim di LATAR BELAKANG — transaksi SUDAH berhasil pada
+    //    langkah 1–3 (commit lokal). Respons Google Sheets tidak pernah
+    //    menentukan keberhasilan transaksi; gagal kirim → tetap di antrean
+    //    & dicoba ulang otomatis saat online.
+    void this.syncEngine.syncNow();
+    const status = this.syncEngine.getStatus();
 
-    return { transaction, sync, stockUpdates };
+    return {
+      transaction,
+      sync: { state: status.state, queuedCount: status.queuedCount },
+      stockUpdates,
+    };
   }
 }
