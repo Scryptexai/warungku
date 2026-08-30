@@ -30,6 +30,14 @@ export function ScanScreen() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  // Pintasan "Catat Bon" dari Beranda: ?pay=bon → PaymentSheet dibuka dengan
+  // BON pre-selected. User tetap harus pilih barang dulu, klik "Bayar",
+  // lalu konfirmasi. Bendera visual di header mengingatkan mode ini.
+  const payIntent = searchParams.get("pay");
+  const initialPaymentType: PaymentType | undefined =
+    payIntent === "bon" ? "BON" : payIntent === "cash" ? "CASH" : undefined;
+  const isBonIntent = payIntent === "bon";
+
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanKey, setScanKey] = useState(0);
   const [view, setView] = useState<View>("scan");
@@ -162,12 +170,27 @@ export function ScanScreen() {
           <Icon name="close" className="h-5 w-5" />
         </Link>
         <h1 className="text-base font-bold">Scan Barang</h1>
+        {isBonIntent ? (
+          <span
+            className="rounded-full bg-amber-500/90 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-white"
+            title="Mode Catat Bon — pembayaran pre-set ke BON"
+          >
+            ● Bon
+          </span>
+        ) : null}
         {cart.count > 0 ? (
           <span className="ml-auto rounded-full bg-brand-600 px-2.5 py-1 text-[11px] font-bold">
             {cart.count} barang
           </span>
         ) : null}
       </div>
+
+      {isBonIntent ? (
+        <p className="mx-4 mb-2 rounded-xl border border-amber-300/40 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-100">
+          Mode Catat Bon — pilih barang lalu ketuk Bayar. Pembayaran otomatis
+          terset ke BON.
+        </p>
+      ) : null}
 
       <div className="flex flex-1 flex-col items-center px-4">
         <div className="relative mt-2 aspect-[4/3] w-full max-w-sm">
@@ -378,6 +401,7 @@ export function ScanScreen() {
           saving={saving}
           onClose={() => setView("scan")}
           onSubmit={handlePay}
+          initialPaymentType={initialPaymentType}
         />
       ) : null}
 

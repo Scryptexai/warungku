@@ -64,6 +64,13 @@ export const QUICK_ACCESS_ITEMS: NavItem[] = [
     phase: 2,
   },
   {
+    href: "/scan?pay=bon",
+    label: "Catat Bon",
+    description: "Jual tanpa tunai, catat piutang",
+    icon: "receipt",
+    phase: 4,
+  },
+  {
     href: "/transaksi",
     label: "Transaksi",
     description: "Riwayat penjualan",
@@ -76,13 +83,6 @@ export const QUICK_ACCESS_ITEMS: NavItem[] = [
     description: "Omzet & analisis",
     icon: "chart",
     phase: 4,
-  },
-  {
-    href: "/ai",
-    label: "Asisten AI",
-    description: "Tanya data warung",
-    icon: "sparkles",
-    phase: 6,
   },
 ];
 
