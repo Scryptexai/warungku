@@ -78,11 +78,18 @@ BUKA APLIKASI → SCAN BARCODE  (berlapis, offline dulu)
 
 Scan yang tidak menemukan produk di katalog warung TIDAK berhenti —
 
-1. **Master bawaan (offline)** — `src/data/master/master-products.ts`:
-   ±100 produk warung umum (mi instan, minuman, rokok, bahan masak, dll.)
-   dengan kategori & harga rekomendasi. **Catatan jujur**: barcode-nya
-   adalah TEMPLATE EAN-13 ber-digit-cek valid, BUKAN nomor terdaftar
-   resmi — katalog nyata datang dari impor CSV atau Open Food Facts.
+1. **Master bawaan (offline)** — `src/data/master/` — **715 produk**:
+   - 509 produk kurasi warung (mi instan, minuman, snack, rokok, bahan
+     masak, kebutuhan rumah) dengan harga rekomendasi warung. Barcode
+     kurasi = template EAN-13 valid (digit cek dihitung), BUKAN nomor
+     terdaftar resmi.
+   - 206 produk Indonesia dari Open Food Facts dengan **BARCODE NYATA**
+     (scan kemasan asli langsung dikenali); harganya perkiraan otomatis
+     dari kategori & ukuran kemasan.
+   - Daftar lengkap bisa diperluas: `scripts/data/*.csv` (kurasi +
+     hasil unduh OFF) → `node scripts/generate-master-catalog.mjs`.
+     Pool OPEN OFF Indonesia: 8.698 produk (api publik, throttled) —
+     sisanya tetap terjangkau lewat lookup ONLINE per-scan.
 2. **Open Food Facts (online)** — `src/services/openfoodfacts.service.ts`:
    lookup `world.openfoodfacts.org` (API publik gratis, tanpa kunci).
    Nama & kategori dipetakan ke kategori warung; **OFF tidak punya harga**,
@@ -297,7 +304,8 @@ warungku/
     │   ├── google/         # sheets-schema, sheets-io, HttpGoogleApiClient,
     │   │                   # GoogleSheetsSyncTarget (tulis idempotent)
     │   ├── local/          # LocalStore (localStorage/memori) — DATABASE UTAMA
-    │   └── master/         # master-products.ts (seed offline ±100 produk)
+    │   └── master/         # master-products.ts + master-offline-catalog.ts
+    │                       # (715 produk offline: kurasi + barcode nyata OFF)
     ├── sync/               # QueueSyncEngine (antrean + onOperationSynced)
     ├── auth/               # AuthProvider + GoogleAuthProvider (klien)
     ├── lib/                # csv (impor), pricing (harga massal), reports

@@ -1,4 +1,5 @@
 import type { ProductUnit } from "@/domain";
+import { OFFLINE_CATALOG } from "./master-offline-catalog";
 
 /**
  * MASTER PRODUK — database produk bawaan (OFFLINE).
@@ -174,8 +175,16 @@ function buildMaster(): MasterProduct[] {
   }));
 }
 
-/** Seluruh master produk (sudah dengan check digit EAN-13 valid). */
-export const MASTER_PRODUCTS: MasterProduct[] = buildMaster();
+/**
+ * Seluruh master produk offline:
+ * - seed inti di file ini (harga kurasi),
+ * - katalog tambahan hasil generate (kurasi ekstra + produk Indonesia
+ *   Open Food Facts dengan barcode NYATA) — lihat master-offline-catalog.ts.
+ */
+export const MASTER_PRODUCTS: MasterProduct[] = [
+  ...buildMaster(),
+  ...OFFLINE_CATALOG,
+];
 
 const MASTER_BY_BARCODE = new Map<string, MasterProduct>(
   MASTER_PRODUCTS.map((item) => [item.barcode, item]),
