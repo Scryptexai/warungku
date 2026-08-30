@@ -7,7 +7,7 @@ import { useApp } from "@/components/providers/AppProviders";
 import { useCart } from "@/components/providers/CartProvider";
 import { useCatalog } from "@/components/providers/CatalogProvider";
 import { Icon } from "@/components/ui/icons";
-import type { PaymentType, SyncRunSummary } from "@/domain";
+import type { PaymentType, SyncState } from "@/domain";
 import { formatIDR } from "@/lib/money";
 import { ScannerView } from "./ScannerView";
 import { ScanResultSheet, type ScanResult } from "./ScanResultSheet";
@@ -39,7 +39,7 @@ export function ScanScreen() {
     total: number;
     paymentType: PaymentType;
     customerName: string | null;
-    sync: SyncRunSummary;
+    sync: { state: SyncState; queuedCount: number };
   } | null>(null);
   const [saleError, setSaleError] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
@@ -126,8 +126,14 @@ export function ScanScreen() {
     if (!saleResult) return;
     setRetrying(true);
     try {
-      const summary = await sync.syncNow();
-      setSaleResult({ ...saleResult, sync: summary });
+      await sync.syncNow();
+      // Sinkronkan status sinkron (state + antrian) dari engine, bukan ringkasan run.
+      // Kompatibel dengan SaleResultSheet yang mengharapkan { state, queuedCount }.
+      const status = sync.getStatus();
+      setSaleResult({
+        ...saleResult,
+        sync: { state: status.state, queuedCount: status.queuedCount },
+      });
     } finally {
       setRetrying(false);
     }
