@@ -28,7 +28,9 @@ export type IconName =
   | "user"
   | "search"
   | "close"
-  | "send";
+  | "send"
+  | "upload"
+  | "tag";
 
 const ICON_PATHS: Record<IconName, ReactNode> = {
   home: (
@@ -165,6 +167,19 @@ const ICON_PATHS: Record<IconName, ReactNode> = {
     <>
       <path d="m22 2-7 20-4-9-9-4Z" />
       <path d="M22 2 11 13" />
+    </>
+  ),
+  upload: (
+    <>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="m7 9 5-5 5 5" />
+      <path d="M12 4v12" />
+    </>
+  ),
+  tag: (
+    <>
+      <path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z" />
+      <circle cx="7.5" cy="7.5" r="1" />
     </>
   ),
 };

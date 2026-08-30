@@ -7,7 +7,11 @@ bahasa Indonesia sehari-hari.
 
 ---
 
-## Status: PHASE 5 — Transaction & Sales Engine ✅
+## Status: PHASE 5A — High-Speed Transaction Input ✅
+
+> Alur transaksi disusun ulang mengikuti cara kerja warung NYATA (§5A):
+> pemilik mencatat banyak nama barang dengan cepat — harga & total
+> dihitung belakangan. Bukan alur kasir Alfamart.
 
 | Area | Status |
 | --- | --- |
@@ -20,21 +24,29 @@ bahasa Indonesia sehari-hari.
 | **Pembayaran TUNAI & BON (nama pembeli wajib untuk bon)** | ✅ Tahap 3 |
 | **Penyimpanan transaksi + potong stok konsisten** | ✅ Tahap 3 |
 | **Google Sheets sebagai database warung (OAuth + tulis idempotent)** | ✅ Tahap 3 |
-| Pencarian, customer/bon & laporan | ⏳ Tahap 4 |
-| Manajemen inventori & produk lanjutan | ⏳ Tahap 5 |
-| AI agent / business intelligence | ⏳ Tahap 6 |
+| Riwayat transaksi + bon + laporan (dari data perangkat) | ✅ |
+| **Database master produk publik** (seed offline + Open Food Facts) | ✅ |
+| **Impor CSV** produk massal (mis. dataset Kaggle) | ✅ |
+| **Filter kategori multi-pilih + ubah harga massal (persen)** | ✅ |
+| **Penyimpanan OFFLINE-FIRST** (perangkat = database utama, Sheets = cadangan) | ✅ |
+| **PWA** — aplikasi bisa dipasang & dibuka tanpa internet | ✅ |
+| **Input transaksi cepat SATU layar (§5A)** — cari/ketik + scan, jumlah nyambung, harga khusus transaksi | ✅ |
+| AI agent / business intelligence | ⏳ Tahap 7 (menunggu instruksi) |
 | Mock data & pengujian menyeluruh | ⏳ Tahap 7 |
 | Hardening produksi & deployment | ⏳ Tahap 8 |
 
 Alur yang sudah berjalan end-to-end:
 
 ```
-BUKA APLIKASI → SCAN BARCODE
-  ├─ produk dikenal  → ATUR JUMLAH → TAMBAH KE TRANSAKSI → SCAN LAGI…
-  │     → BAYAR → TUNAI / BON (→ NAMA PEMBELI) → SIMPAN
-  │     → TERSIMPAN KE GOOGLE SHEETS → STOK BERKURANG → TRANSAKSI BARU
-  └─ produk belum ada → "PRODUK BELUM TERDAFTAR" → TAMBAH PRODUK
-        (barcode terisi + satuan) → SIMPAN → KEMBALI KE TRANSAKSI → JUALAN
+BUKA APLIKASI → TRANSAKSI BARU (ketik nama ATAU scan — satu layar, §5A)
+  ├─ ada di KATALOG WARUNG (perangkat) → ATUR JUMLAH → TAMBAH KE TRANSAKSI
+  ├─ ada di MASTER BAWAAN (offline, ±100 produk) → HARGA & KATEGORI REKOMENDASI
+  │     terisi otomatis → "TAMBAHKAN KE WARUNG SAYA" → cek harga & stok → SIMPAN
+  ├─ ada di OPEN FOOD FACTS (online, 2jt+ produk) → idem, tanpa harga rekomendasi
+  └─ belum ada di mana pun → "PRODUK BELUM TERDAFTAR" → TAMBAH PRODUK (barcode terisi)
+        → BAYAR → TUNAI / BON (→ NAMA PEMBELI) → KONFIRMASI → SIMPAN
+        → TERSIMPAN DI PERANGKAT (utama) → STOK BERKURANG
+        → CADANGAN KE GOOGLE SHEETS otomatis saat online → TRANSAKSI BARU
 ```
 
 ---
@@ -67,6 +79,103 @@ BUKA APLIKASI → SCAN BARCODE
   ada, HTTP tidak aman) didiagnosis spesifik + tombol **Buka di Tab Baru**.
   Kode manual selalu tersedia sebagai jalur cadangan.
 
+### Transaksi cepat — SATU layar (§5A)
+
+Layar **Transaksi Baru** (tombol SCAN di navigasi bawah / Beranda) kini
+meniru alur tulis-tangan warung:
+
+```
+KETIK "ind" → ketuk hasil → MASUK DAFTAR (jumlah nyambung otomatis)
+→ ketik barang berikutnya → ketuk → …
+→ (kapan pun) ubah jumlah +/− · ubah harga baris (khusus transaksi ini)
+→ TUNAI / BON → konfirmasi → SIMPAN → transaksi berikutnya langsung
+```
+
+- **Tanpa pindah layar**: pencarian, daftar barang, jumlah, harga, dan
+  total ada di satu permukaan; input pencarian langsung fokus.
+- **1 barang ≈ 2 ketukan** (ketuk hasil; input dibersihkan & fokus otomatis).
+- **Barang sama dipilih lagi → JUMLAH bertambah** (bukan baris baru).
+- **Harga otomatis dari data produk**; tombol harga di tiap baris membuka
+  ubah harga **khusus transaksi itu** — harga master TIDAK berubah
+  (transaksi menyimpan snapshot).
+- **Scan barcode = metode kedua pada layar yang sama** (tombol Scan):
+  barang terdaftar LANGSUNG masuk daftar tanpa dialog; barcode tak
+  dikenal → kartu tambah produk (master offline → Open Food Facts →
+  manual). Strategi cakupan penuh ditangani Tahap 5B.
+- **Barang tidak ada di pencarian** → baris “+ Tambah Produk ‘xxx’”
+  (nama terisi) → simpan → otomatis masuk daftar transaksi.
+- **TUNAI / BON di footer** sejak awal; BON membuka pencarian pelanggan
+  instan; SIMPAN selalu butuh konfirmasi eksplisit.
+
+Uji otomatis (smoke 50): transaksi 30 jenis barang + harga khusus 4.321
+(master tetap) + barang berulang qty 3 (stok 50→47) + BON → buku bon
+pelanggan — semuanya lolos.
+
+### Database master produk publik (gratis)
+
+Scan yang tidak menemukan produk di katalog warung TIDAK berhenti —
+
+1. **Master bawaan (offline)** — `src/data/master/` — **715 produk**:
+   - 509 produk kurasi warung (mi instan, minuman, snack, rokok, bahan
+     masak, kebutuhan rumah) dengan harga rekomendasi warung. Barcode
+     kurasi = template EAN-13 valid (digit cek dihitung), BUKAN nomor
+     terdaftar resmi.
+   - 206 produk Indonesia dari Open Food Facts dengan **BARCODE NYATA**
+     (scan kemasan asli langsung dikenali); harganya perkiraan otomatis
+     dari kategori & ukuran kemasan.
+   - Daftar lengkap bisa diperluas: `scripts/data/*.csv` (kurasi +
+     hasil unduh OFF) → `node scripts/generate-master-catalog.mjs`.
+     Pool OPEN OFF Indonesia: 8.698 produk (api publik, throttled) —
+     sisanya tetap terjangkau lewat lookup ONLINE per-scan.
+2. **Open Food Facts (online)** — `src/services/openfoodfacts.service.ts`:
+   lookup `world.openfoodfacts.org` (API publik gratis, tanpa kunci).
+   Nama & kategori dipetakan ke kategori warung; **OFF tidak punya harga**,
+   jadi harga diisi sendiri. Offline/timeout → diam (fallback form manual).
+3. **Impor CSV milik sendiri** — menu **Produk → Impor**: format fleksibel
+   (pemisah `,` `;` tab; kolom Indonesia/Inggris: barcode/nama/kategori/
+   harga/stok/satuan), pratinjau dulu, barcode ganda dilewati otomatis,
+   laporan hasil (berhasil / dilewati / gagal). Tombol **Contoh CSV**
+   menyediakan templat. Cocok untuk dataset produk Indonesia dari Kaggle.
+
+### Fitur efisiensi warung
+
+- **Filter kategori multi-pilih** di daftar Produk (cth. tampilkan
+  "Makanan Instan" + "Minuman" sekaligus).
+- **Ubah harga massal**: mode Pilih → centang produk (atau "pilih semua") →
+  naik/turunkan sekian persen (preset 5/10/15/25% atau bebas) → pratinjau
+  contoh harga lama → baru → konfirmasi eksplisit → semua harga berubah
+  sekaligus (dibulatkan ke ratusan rupiah). Transaksi LAMA tetap menyimpan
+  harga saat transaksi terjadi (snapshot) — tidak ikut berubah.
+
+### Penyimpanan OFFLINE-FIRST (rework arsitektur data)
+
+**Database utama = PERANGKAT (localStorage via `LocalStore`)**. Google
+Sheets diturunkan menjadi CADANGAN milik warung:
+
+- Tulis (scan/produk/transaksi) → simpan perangkat dulu dengan
+  `sync_status` PENDING → antre → kirim ke Sheets saat online
+  (otomatis via event `online`, atau tombol **Sinkronkan** di Beranda)
+  → ditandai SYNCED, **tidak dihapus dari perangkat**.
+- Baca (produk, riwayat transaksi, bon, laporan, ringkasan Beranda) →
+  SELALU dari perangkat → instan & tanpa internet. Riwayat Transaksi,
+  Laporan (omzet/jumlah/bon/produk terlaris/grafik 7 hari), dan Bon kini
+  layar sungguhan — bukan lagi kerangka.
+- **Tarik pertama kali online**: produk + pelanggan + transaksi dari Sheets
+  di-merge ke perangkat (by ID; transaksi lokal yang masih PENDING selalu
+  menang agar tidak tertimpa).
+- **Konflik/gagal kirim** → kartu Sinkronisasi Beranda menampilkan pesan
+  Indonesia sederhana; data tetap aman di antrean & dicoba ulang otomatis.
+- **Migrasi**: koleksi lama `pendingTransactions` dipindah otomatis ke
+  koleksi `transactions` saat pertama dibuka — tidak ada data hilang.
+
+### PWA — dipasang & dibuka offline
+
+`manifest.webmanifest` (nama, ikon 192/512 + maskable, shortcut Scan &
+Produk) + service worker (`public/sw.js`): aset statis Next (ber-hash)
+cache-first; halaman network-first dengan cadangan cache; Beranda
+di-precache. Setelah sekali dibuka online, aplikasi bisa dibuka tanpa
+internet (butuh HTTPS — `npm start` di localhost juga diizinkan).
+
 ## 1. Tujuan Produk
 
 Aplikasi kasir untuk warung kecil dengan perangkat utama **smartphone**.
@@ -97,7 +206,7 @@ historis tetap akurat.
 **Stok:** `stok − terjual = stok baru`, dipotong otomatis saat transaksi
 disimpan, konsisten lokal maupun di Sheets.
 
-## 3. GOOGLE SHEETS = DATABASE WARUNG
+## 3. GOOGLE SHEETS = CADANGAN DATA WARUNG
 
 Google Sheets milik pemilik warung adalah sumber data utama. Tidak ada
 database transaksi di server aplikasi.
@@ -129,16 +238,18 @@ pencarian transaksi/pelanggan, analisis produk, dan AI agent.
    Google** → login akun Google warung → izinkan. Spreadsheet
    `Warungku — {nama warung}` dibuat otomatis (atau dipakai ulang bila sudah
    ada), lalu seluruh data lokal langsung dikirim.
-3. Selesai — setiap transaksi/produk/bon otomatis masuk ke spreadsheet.
+3. Selesai — setiap transaksi/produk/bon tersimpan di perangkat DAN
+   otomatis dicadangkan ke spreadsheet saat online.
 
 ### Arsitektur koneksi & keamanan
 
 ```
 BROWSER WARUNG                        SERVER (Next.js API)         GOOGLE
 ──────────────────────────            ─────────────────────        ─────────
-Transaksi → LocalStore (dulu!)  ──►   /api/sheets/request   ──►   Sheets API
-Antrean sync (QueueSyncEngine)        (proksi + token)             Drive API
-Sambungkan Google              ──►   /api/auth/google/*     ──►   OAuth 2.0
+LocalStore (DATABASE UTAMA)
+  └ antrean sync (QueueSyncEngine) ──► /api/sheets/request ──► Sheets API
+Sambungkan Google                ──► /api/auth/google/*    ──► OAuth 2.0
+     (tarik balik: Sheets ──► merge by ID ──► perangkat, saat online)
 ```
 
 - Token OAuth disimpan **terenkripsi AES-256-GCM** di cookie httpOnly milik
@@ -151,9 +262,11 @@ Sambungkan Google              ──►   /api/auth/google/*     ──►   OA
 
 ### Jujur soal status (offline-first)
 
-Transaksi SELALU disimpan dulu di perangkat, lalu dikirim ke Sheets:
+Transaksi SELALU disimpan dulu di perangkat (`sync_status` = PENDING), lalu
+dicadangkan ke Sheets:
 
-- Berhasil → **“✓ Transaksi berhasil disimpan”**.
+- Berhasil → **“✓ Transaksi berhasil disimpan”** (perangkat) dan antrean
+  kosong → ditandai SYNCED (tetap ada di riwayat perangkat).
 - Google tidak terjangkau → **“Transaksi belum tersimpan — periksa koneksi
   dan coba lagi”** + tombol **Coba Kirim Lagi**; data aman di perangkat dan
   terkirim otomatis saat koneksi kembali (event `online`).
@@ -192,13 +305,16 @@ npm run dev                   # http://localhost:3000
 ```
 warungku/
 ├── .env.example                # Konfigurasi environment (tanpa kredensial)
-├── scripts/smoke-sync.ts       # Uji asap lintas lapisan
+├── public/                     # PWA: manifest.webmanifest, sw.js, icons/
+├── scripts/smoke-sync.ts       # Uji asap lintas lapisan (41 pemeriksaan)
 └── src/
     ├── app/
-    │   ├── page.tsx                    # BERANDA (dompet digital)
+    │   ├── page.tsx                    # BERANDA (dompet digital + kartu sinkron)
     │   ├── scan/                       # SCAN: kamera → qty → keranjang → bayar
     │   ├── produk/                     # produk: daftar/cari/tambah/detail/edit
-    │   ├── transaksi/ laporan/ ai/     # tujuan fase berikutnya (Tahap 4/6)
+    │   │   └── impor/                  # IMPOR CSV produk massal
+    │   ├── transaksi/                  # riwayat transaksi + bon (data perangkat)
+    │   ├── laporan/                    # omzet, terlaris, grafik 7 hari
     │   ├── profil/                     # profil + KONEKSI GOOGLE SHEETS
     │   └── api/
     │       ├── auth/google/{start,callback,status,disconnect}/
@@ -207,21 +323,30 @@ warungku/
     ├── components/
     │   ├── scan/          # ScanScreen, ScannerView, ScanResultSheet (+qty),
     │   │                  # CartBar, PaymentSheet (TUNAI/BON), SaleResultSheet
-    │   ├── products/      # ProductsScreen, ProductForm (+satuan), Detail, Edit
-    │   ├── profile/       # ProfileForm, GoogleSheetsCard (koneksi)
-    │   ├── home/ layout/ providers/ (App + Cart) ui/
+    │   ├── products/      # ProductsScreen (multi-pilih + harga massal),
+    │   │                  # ProductForm, Detail, Edit, ImportProductsScreen
+    │   ├── transactions/  # TransactionsScreen + bon detail (offline)
+    │   ├── reports/       # ReportsScreen (agregasi lokal)
+    │   ├── home/          # header, ringkasan, ScanHero, aktivitas, SyncCard
+    │   ├── pwa/           # ServiceWorkerRegistrar (pasang SW)
+    │   ├── profile/ layout/ providers/ (App + Catalog) ui/
     ├── services/
     │   ├── sale.service.ts        # ORKESTRATOR: harga terbaru, stok, bon, sync
-    │   ├── product.service.ts  customer.service.ts  transaction.service.ts
-    │   ├── store-profile.service.ts  sync.service.ts  container.ts (DI root)
+    │   ├── product.service.ts     # + bulkCreateProducts, bulkUpdatePrices
+    │   ├── transaction.service.ts # offline-first + pullFromSheets (merge)
+    │   ├── openfoodfacts.service.ts  customer.service.ts  store-profile.service.ts
+    │   └── sync.service.ts  container.ts (DI root)
     ├── domain/             # model data murni (Product, Transaction, dst.)
     ├── data/
     │   ├── google/         # sheets-schema, sheets-io, HttpGoogleApiClient,
     │   │                   # GoogleSheetsSyncTarget (tulis idempotent)
-    │   └── local/          # LocalStore (localStorage/memori)
-    ├── sync/               # QueueSyncEngine (antrean offline-first)
+    │   ├── local/          # LocalStore (localStorage/memori) — DATABASE UTAMA
+    │   └── master/         # master-products.ts + master-offline-catalog.ts
+    │                       # (715 produk offline: kurasi + barcode nyata OFF)
+    ├── sync/               # QueueSyncEngine (antrean + onOperationSynced)
     ├── auth/               # AuthProvider + GoogleAuthProvider (klien)
-    ├── lib/                # crypto (AES-GCM), google-oauth, auth-session,
+    ├── lib/                # csv (impor), pricing (harga massal), reports
+    │                       # (agregasi), crypto, google-oauth, auth-session,
     │                       # errors, id, input, money, datetime, cn
     └── config/ types/      # konfigurasi, env, nav; tipe bersama
 ```
@@ -229,9 +354,13 @@ warungku/
 ## 7. Arsitektur Sinkronisasi
 
 ```
-OPERASI LOKAL → LOCALSTORE (dulu) → ANTREAN SYNC → GOOGLE SHEETS → SUKSES
+OPERASI LOKAL → LOCALSTORE = DATABASE UTAMA (sync_status PENDING)
+                                    │
+                       ANTREAN SYNC → GOOGLE SHEETS (CADANGAN) → SUKSES
+                                    │         ↳ entitas ditandai SYNCED
                                     ↘ GAGAL JARINGAN → TETAP DI ANTREAN
                                       → DICOBA LAGI OTOMATIS SAAT ONLINE
+SAAT ONLINE (pertama / Sinkronkan) → SHEETS ditarik → MERGE by ID → PERANGKAT
 ```
 
 - Sesi sinkronisasi diserialisasi (promise chain) — ringkasan yang

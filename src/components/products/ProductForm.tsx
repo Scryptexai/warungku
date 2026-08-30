@@ -12,9 +12,10 @@ import { digitsOnly, parseWholeNumber } from "@/lib/input";
 import { formatIDR } from "@/lib/money";
 import { cn } from "@/lib/cn";
 import { PRODUCT_UNITS, type ProductUnit } from "@/domain";
+import { MASTER_CATEGORIES } from "@/data/master/master-products";
 
-/** Kategori umum warung — sekali ketuk, tanpa mengetik. */
-const CATEGORY_SUGGESTIONS = ["Makanan", "Minuman", "Rokok", "Snack", "Kebutuhan", "Lainnya"];
+/** Kategori master warung — sama dengan filter & impor CSV, sekali ketuk. */
+const CATEGORY_SUGGESTIONS: string[] = [...MASTER_CATEGORIES, "Lainnya"];
 
 type FieldName = "barcode" | "name" | "category" | "price" | "stock";
 type FieldErrors = Partial<Record<FieldName, string>>;
@@ -74,6 +75,10 @@ export function ProductForm({
   mode,
   product,
   initialBarcode = "",
+  initialName = "",
+  initialCategory = "",
+  initialPrice = "",
+  initialUnit,
   cancelHref,
   onSaved,
 }: {
@@ -81,19 +86,26 @@ export function ProductForm({
   product?: EditableProduct;
   /** Prefill barcode hasil scan untuk mode tambah. */
   initialBarcode?: string;
+  /** Prefill dari database produk (master/Open Food Facts). */
+  initialName?: string;
+  initialCategory?: string;
+  initialPrice?: string;
+  initialUnit?: string;
   cancelHref: string;
   onSaved: (product: Product) => void;
 }) {
   const { products } = useApp();
   const { applyProduct } = useCatalog();
   const [barcode, setBarcode] = useState(product?.barcode ?? initialBarcode);
-  const [name, setName] = useState(product?.name ?? "");
-  const [category, setCategory] = useState(product?.category ?? "");
+  const [name, setName] = useState(product?.name ?? initialName);
+  const [category, setCategory] = useState(product?.category ?? initialCategory);
   const [price, setPrice] = useState(
-    product ? String(product.currentPrice) : "",
+    product ? String(product.currentPrice) : initialPrice ? digitsOnly(initialPrice) : "",
   );
   const [stock, setStock] = useState(product ? String(product.stock) : "0");
-  const [unit, setUnit] = useState<ProductUnit>(toUnit(product?.unit));
+  const [unit, setUnit] = useState<ProductUnit>(
+    toUnit(product?.unit ?? initialUnit),
+  );
   const [errors, setErrors] = useState<FieldErrors>({});
   const [duplicate, setDuplicate] = useState<DuplicateInfo | null>(null);
   const [genericError, setGenericError] = useState<string | null>(null);

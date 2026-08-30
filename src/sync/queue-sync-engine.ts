@@ -21,6 +21,12 @@ export interface QueueSyncEngineOptions {
   maxOperationsPerRun?: number;
   /** Pasang pendengar online/offline peramban (default: true). */
   listenToNetworkEvents?: boolean;
+  /**
+   * Dipanggil setiap kali SATU operasi berhasil diterima remote —
+   * dipakai untuk menandai sync_status entitas lokal (mis. transaksi
+   * PENDING → SYNCED) tanpa membuat engine mengenal layanan aplikasi.
+   */
+  onOperationSynced?: (operation: SyncOperation) => void | Promise<void>;
 }
 
 const DEFAULT_SNAPSHOT: Omit<SyncStatusSnapshot, "updatedAt"> = {
@@ -47,6 +53,9 @@ export class QueueSyncEngine implements SyncEngine {
   private readonly localStore: LocalStore;
   private readonly maxOperationsPerRun: number;
   private readonly listenToNetworkEvents: boolean;
+  private readonly onOperationSynced:
+    | ((operation: SyncOperation) => void | Promise<void>)
+    | null;
 
   private listeners = new Set<SyncStatusListener>();
   private snapshot: SyncStatusSnapshot = { ...DEFAULT_SNAPSHOT, updatedAt: nowISO() };
@@ -60,6 +69,7 @@ export class QueueSyncEngine implements SyncEngine {
     this.maxOperationsPerRun =
       options.maxOperationsPerRun ?? DEFAULT_MAX_SYNC_OPERATIONS_PER_RUN;
     this.listenToNetworkEvents = options.listenToNetworkEvents ?? true;
+    this.onOperationSynced = options.onOperationSynced ?? null;
   }
 
   async init(): Promise<void> {
@@ -211,6 +221,19 @@ export class QueueSyncEngine implements SyncEngine {
         // Sukses → keluar dari antrean.
         await this.localStore.removeSyncItem(item.id);
         succeeded += 1;
+        // Tandai sync_status entitas lokal (transaksi → synced).
+        if (this.onOperationSynced) {
+          try {
+            await this.onOperationSynced(item.operation);
+          } catch (hookError) {
+            // Gagal menandai TIDAK menggagalkan sinkronisasi — data aman di
+            // Sheets; penandaan menyusul pada operasi berikutnya.
+            console.warn(
+              "[warungku] Gagal menandai operasi sebagai tersinkron.",
+              hookError,
+            );
+          }
+        }
       } catch (error) {
         // Gagal → TETAP di antrean, tunggu percobaan berikutnya.
         const appError = toAppError(error);

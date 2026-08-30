@@ -107,23 +107,54 @@ export class BrowserLocalStore implements LocalStore {
     }
   }
 
-  // ------------------------------------------------- Transaksi tertunda (bon)
+  // ------------------------------------------------- Transaksi (UTAMA)
+
+  async getAllTransactions(): Promise<Transaction[]> {
+    const raw = this.storage.getItem(`${KEY_PREFIX}:transactions`);
+    if (raw === null) {
+      // MIGRASI sekali jalan: aplikasi lama menyimpan transaksi tertunda di
+      // koleksi "pendingTransactions" — pindahkan, jangan buang.
+      const legacy = this.read<Transaction[]>("pendingTransactions", []);
+      if (legacy.length > 0) {
+        this.write("transactions", legacy);
+        this.storage.removeItem(`${KEY_PREFIX}:pendingTransactions`);
+        return legacy;
+      }
+      return [];
+    }
+    return this.read<Transaction[]>("transactions", []);
+  }
+
+  async upsertTransaction(transaction: Transaction): Promise<void> {
+    const transactions = await this.getAllTransactions();
+    const index = transactions.findIndex((item) => item.id === transaction.id);
+    if (index === -1) {
+      this.write("transactions", [transaction, ...transactions]);
+      return;
+    }
+    transactions[index] = transaction;
+    this.write("transactions", transactions);
+  }
+
+  async replaceAllTransactions(transactions: Transaction[]): Promise<void> {
+    this.write("transactions", transactions);
+  }
+
+  async markTransactionSynced(transactionId: string, syncedAt: string): Promise<void> {
+    const transactions = await this.getAllTransactions();
+    const next = transactions.map((item) =>
+      item.id === transactionId
+        ? { ...item, syncedAt: item.syncedAt ?? syncedAt }
+        : item,
+    );
+    this.write("transactions", next);
+    // Koleksi warisan tidak dipakai lagi; bersihkan bila ada.
+    this.storage.removeItem(`${KEY_PREFIX}:pendingTransactions`);
+  }
 
   async getPendingTransactions(): Promise<Transaction[]> {
-    return this.read<Transaction[]>("pendingTransactions", []);
-  }
-
-  async addPendingTransaction(transaction: Transaction): Promise<void> {
-    const transactions = await this.getPendingTransactions();
-    this.write("pendingTransactions", [transaction, ...transactions]);
-  }
-
-  async removePendingTransaction(transactionId: string): Promise<void> {
-    const transactions = await this.getPendingTransactions();
-    this.write(
-      "pendingTransactions",
-      transactions.filter((item) => item.id !== transactionId),
-    );
+    const transactions = await this.getAllTransactions();
+    return transactions.filter((item) => item.syncedAt === null);
   }
 
   // --------------------------------------------------- Antrean sinkronisasi

@@ -1,6 +1,7 @@
 import { HomeHeader } from "@/components/home/HomeHeader";
 import { QuickAccess } from "@/components/home/QuickAccess";
 import { RecentActivity } from "@/components/home/RecentActivity";
+import { SyncStatusCard } from "@/components/home/SyncStatusCard";
 import { ScanHero } from "@/components/home/ScanHero";
 import { TodaySummaryCard } from "@/components/home/TodaySummaryCard";
 import { CURRENT_PHASE, CURRENT_PHASE_LABEL, TOTAL_ROADMAP_PHASES } from "@/config/app";
@@ -26,6 +27,9 @@ export default function HomePage() {
       </div>
       <div className="mt-5 px-4">
         <RecentActivity />
+      </div>
+      <div className="mt-5 px-4">
+        <SyncStatusCard />
       </div>
       <p className="mt-6 px-4 text-center text-[11px] text-stone-400">
         Warungku · Tahap {CURRENT_PHASE} dari {TOTAL_ROADMAP_PHASES} —{" "}

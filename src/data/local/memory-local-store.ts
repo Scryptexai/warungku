@@ -17,7 +17,7 @@ export class MemoryLocalStore implements LocalStore {
   private storeProfile: Store | null = null;
   private products: Product[] = [];
   private customers: Customer[] = [];
-  private pendingTransactions: Transaction[] = [];
+  private transactions: Transaction[] = [];
   private syncQueue: SyncQueueItem[] = [];
   private syncStatus: SyncStatusSnapshot | null = null;
 
@@ -67,18 +67,33 @@ export class MemoryLocalStore implements LocalStore {
     }
   }
 
-  async getPendingTransactions(): Promise<Transaction[]> {
-    return [...this.pendingTransactions];
+  async getAllTransactions(): Promise<Transaction[]> {
+    return [...this.transactions];
   }
 
-  async addPendingTransaction(transaction: Transaction): Promise<void> {
-    this.pendingTransactions = [transaction, ...this.pendingTransactions];
+  async upsertTransaction(transaction: Transaction): Promise<void> {
+    const index = this.transactions.findIndex((item) => item.id === transaction.id);
+    if (index === -1) {
+      this.transactions = [transaction, ...this.transactions];
+      return;
+    }
+    const next = [...this.transactions];
+    next[index] = transaction;
+    this.transactions = next;
   }
 
-  async removePendingTransaction(transactionId: string): Promise<void> {
-    this.pendingTransactions = this.pendingTransactions.filter(
-      (item) => item.id !== transactionId,
+  async replaceAllTransactions(transactions: Transaction[]): Promise<void> {
+    this.transactions = [...transactions];
+  }
+
+  async markTransactionSynced(transactionId: string, syncedAt: string): Promise<void> {
+    this.transactions = this.transactions.map((item) =>
+      item.id === transactionId ? { ...item, syncedAt: item.syncedAt ?? syncedAt } : item,
     );
+  }
+
+  async getPendingTransactions(): Promise<Transaction[]> {
+    return this.transactions.filter((item) => item.syncedAt === null);
   }
 
   async getSyncQueue(): Promise<SyncQueueItem[]> {
@@ -116,7 +131,7 @@ export class MemoryLocalStore implements LocalStore {
     this.storeProfile = null;
     this.products = [];
     this.customers = [];
-    this.pendingTransactions = [];
+    this.transactions = [];
     this.syncQueue = [];
     this.syncStatus = null;
   }

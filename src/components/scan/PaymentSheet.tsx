@@ -24,17 +24,31 @@ export function PaymentSheet({
   onClose,
   onSubmit,
   saving,
+  initialPaymentType,
 }: {
   onClose: () => void;
   /** Dipanggil dengan (paymentType, customerName?) — sekali saja per transaksi. */
   onSubmit: (paymentType: PaymentType, customerName?: string) => void;
   saving: boolean;
+  /**
+   * §5A: tombol TUNAI/BON di layar transaksi bisa langsung membuka langkah
+   * yang sesuai — konfirmasi SIMPAN eksplisit tetap wajib (§12).
+   */
+  initialPaymentType?: PaymentType;
 }) {
   const { customers, ensureLocal } = useCatalog();
   const cart = useCart();
 
-  const [step, setStep] = useState<Step>("choose");
-  const [paymentType, setPaymentType] = useState<PaymentType>("CASH");
+  const [step, setStep] = useState<Step>(
+    initialPaymentType === "CASH"
+      ? "cash-confirm"
+      : initialPaymentType === "BON"
+        ? "bon-customer"
+        : "choose",
+  );
+  const [paymentType, setPaymentType] = useState<PaymentType>(
+    initialPaymentType ?? "CASH",
+  );
   const [customerName, setCustomerName] = useState("");
   const [pickedCustomer, setPickedCustomer] = useState<Customer | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);

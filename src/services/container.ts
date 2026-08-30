@@ -63,17 +63,35 @@ export function createAppContainer(
   const syncTarget =
     overrides.syncTarget ?? new GoogleSheetsSyncTarget(googleClient, getSpreadsheetId);
 
+  // Penanda sync_status lokal — terhubung belakangan (transactions butuh
+  // engine, engine butuh penanda) lewat closure; hanya dipanggil runtime.
+  let transactionsService: TransactionService | null = null;
+
   const syncEngine =
     overrides.syncEngine ??
     new QueueSyncEngine({
       target: syncTarget,
       localStore,
       listenToNetworkEvents: true,
+      onOperationSynced: (operation) => {
+        if (operation.entity === "TRANSACTION" && operation.kind === "CREATE") {
+          const payload = operation.payload as { id?: string } | null;
+          if (payload && typeof payload.id === "string") {
+            return transactionsService?.markSynced(payload.id);
+          }
+        }
+        return undefined;
+      },
     });
 
   const products = new ProductService({ repository, localStore, syncEngine });
   const customers = new CustomerService({ repository, localStore, syncEngine });
-  const transactions = new TransactionService({ localStore, syncEngine });
+  transactionsService = new TransactionService({
+    localStore,
+    syncEngine,
+    repository,
+  });
+  const transactions = transactionsService;
 
   return {
     localStore,

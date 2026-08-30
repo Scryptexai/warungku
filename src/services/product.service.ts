@@ -10,6 +10,13 @@ import type { SyncEngine } from "@/sync/sync-engine";
 import { nowISO } from "@/lib/datetime";
 import { NotFoundError, ValidationError } from "@/lib/errors";
 import { createPrefixedId } from "@/lib/id";
+import { computeBulkPrice, type PriceChange } from "@/lib/pricing";
+
+export interface BulkImportResult {
+  created: Product[];
+  skippedExisting: Array<{ barcode: string; name: string }>;
+  failedRows: Array<{ row: number; reason: string }>;
+}
 
 export interface ProductServiceDeps {
   repository: StoreDataRepository;
@@ -226,5 +233,118 @@ export class ProductService {
       createdAt: next.updatedAt,
     });
     return next;
+  }
+
+  /**
+   * IMPOR massal dari CSV master milik pengguna (mis. dataset Kaggle).
+   * Semua baris divalidasi dulu — kalau ada yang rusak, baris itu dilewati
+   * (bukan seluruh impor dibatalkan). Barcode yang sudah ada di katalog
+   * dilewati (satu barcode = satu produk). Kembalikan laporan ringkas.
+   */
+  async bulkCreateProducts(
+    inputs: CreateProductInput[],
+  ): Promise<BulkImportResult> {
+    const products = await this.localStore.getCachedProducts();
+    const byBarcode = new Map(
+      products.filter((p) => p.barcode).map((p) => [p.barcode as string, p]),
+    );
+
+    const result: BulkImportResult = { created: [], skippedExisting: [], failedRows: [] };
+    const now = nowISO();
+
+    inputs.forEach((input, index) => {
+      const name = input.name?.trim() ?? "";
+      const barcode = input.barcode?.trim() ?? "";
+      if (!barcode || !name) {
+        result.failedRows.push({ row: index + 1, reason: "barcode atau nama kosong" });
+        return;
+      }
+      const existing = byBarcode.get(barcode);
+      if (existing) {
+        result.skippedExisting.push({ barcode, name: existing.name });
+        return;
+      }
+      const currentPrice = Math.round(input.currentPrice ?? 0);
+      if (!Number.isFinite(currentPrice) || currentPrice < 0) {
+        result.failedRows.push({ row: index + 1, reason: "harga tidak valid" });
+        return;
+      }
+
+      const product: Product = {
+        id: createPrefixedId("prd"),
+        barcode,
+        name,
+        currentPrice,
+        costPrice: null,
+        stock: Math.max(0, Math.round(input.stock ?? 0)),
+        unit: input.unit ?? "pcs",
+        category: input.category?.trim() || "Lainnya",
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+      byBarcode.set(barcode, product);
+      result.created.push(product);
+    });
+
+    if (result.created.length > 0) {
+      // Tulis lokal SEKALI (cepat), lalu antre operasi per produk.
+      await this.localStore.setCachedProducts([...products, ...result.created]);
+      for (const product of result.created) {
+        await this.syncEngine.enqueue({
+          id: createPrefixedId("op"),
+          kind: "CREATE",
+          entity: "PRODUCT",
+          payload: product,
+          createdAt: now,
+        });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Ubah harga BANYAK produk sekaligus (mis. semua Makanan Instan +10%).
+   * Harga baru dibulatkan ke ratusan rupiah oleh lib/pricing.
+   * Transaksi LAMA tidak berubah — mereka menyimpan snapshot harga sendiri.
+   */
+  async bulkUpdatePrices(
+    ids: string[],
+    change: PriceChange,
+  ): Promise<Product[]> {
+    if (ids.length === 0) {
+      throw new ValidationError("Pilih minimal satu produk terlebih dahulu.");
+    }
+    const products = await this.localStore.getCachedProducts();
+    const idSet = new Set(ids);
+    const now = nowISO();
+    const updated: Product[] = [];
+
+    const next = products.map((product) => {
+      if (!idSet.has(product.id)) return product;
+      const nextPrice = computeBulkPrice(product.currentPrice, change);
+      if (nextPrice === product.currentPrice) return product;
+      const changed: Product = {
+        ...product,
+        currentPrice: nextPrice,
+        updatedAt: now,
+      };
+      updated.push(changed);
+      return changed;
+    });
+
+    if (updated.length > 0) {
+      await this.localStore.setCachedProducts(next);
+      for (const product of updated) {
+        await this.syncEngine.enqueue({
+          id: createPrefixedId("op"),
+          kind: "UPDATE",
+          entity: "PRODUCT",
+          payload: product,
+          createdAt: now,
+        });
+      }
+    }
+    return updated;
   }
 }

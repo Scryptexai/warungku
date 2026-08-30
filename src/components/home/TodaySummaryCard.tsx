@@ -1,24 +1,33 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { formatIDR } from "@/lib/money";
+import { useEffect, useMemo, useState } from "react";
+import { useCatalog } from "@/components/providers/CatalogProvider";
+import { formatIDR, formatNumberID } from "@/lib/money";
+import { summarizeTransactions } from "@/lib/reports";
 
 /**
- * Kartu ringkasan hari ini — menimpa tepi bawah header gradien
- * (pola kartu saldo pada aplikasi dompet digital).
- * Nilai akan terisi otomatis setelah pencatatan transaksi aktif (Tahap 3).
+ * Kartu ringkasan hari ini — pola kartu saldo aplikasi dompet digital.
+ * Dihitung LANGSUNG dari database transaksi perangkat (offline-first):
+ * tanpa internet pun angka tetap benar.
  */
 export function TodaySummaryCard() {
+  const { transactions, ensureLocal } = useCatalog();
   const [dateLabel, setDateLabel] = useState("");
 
   useEffect(() => {
+    void ensureLocal();
     setDateLabel(
       new Intl.DateTimeFormat("id-ID", {
         dateStyle: "full",
         timeZone: "Asia/Jakarta",
       }).format(new Date()),
     );
-  }, []);
+  }, [ensureLocal]);
+
+  const summary = useMemo(
+    () => summarizeTransactions(transactions ?? [], "today"),
+    [transactions],
+  );
 
   return (
     <section
@@ -34,20 +43,29 @@ export function TodaySummaryCard() {
       <dl className="mt-3 grid grid-cols-3 divide-x divide-stone-100">
         <div className="pr-2">
           <dt className="text-[11px] text-stone-500">Omzet</dt>
-          <dd className="mt-0.5 text-base font-bold text-stone-900">{formatIDR(0)}</dd>
+          <dd className="mt-0.5 text-base font-bold text-stone-900">
+            {formatIDR(summary.omzet)}
+          </dd>
         </div>
         <div className="px-2">
           <dt className="text-[11px] text-stone-500">Transaksi</dt>
-          <dd className="mt-0.5 text-base font-bold text-stone-900">0</dd>
+          <dd className="mt-0.5 text-base font-bold text-stone-900">
+            {formatNumberID(summary.transactionCount)}
+          </dd>
         </div>
         <div className="pl-2">
           <dt className="text-[11px] text-stone-500">Bon</dt>
-          <dd className="mt-0.5 text-base font-bold text-stone-900">{formatIDR(0)}</dd>
+          <dd className="mt-0.5 text-base font-bold text-stone-900">
+            {formatIDR(summary.bonTotal)}
+          </dd>
         </div>
       </dl>
-      <p className="mt-3 text-[11px] leading-relaxed text-stone-400">
-        Ringkasan otomatis dari transaksi warung Anda hadir di Tahap 4.
-      </p>
+      {transactions !== null && transactions.length === 0 ? (
+        <p className="mt-3 text-[11px] leading-relaxed text-stone-400">
+          Mulai jualan dengan tombol SCAN — angka harian terisi otomatis,
+          bahkan tanpa internet.
+        </p>
+      ) : null}
     </section>
   );
 }

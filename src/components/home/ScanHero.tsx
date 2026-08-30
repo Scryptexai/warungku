@@ -3,8 +3,8 @@ import { SCAN_PAGE_HREF } from "@/config/nav";
 import { Icon } from "@/components/ui/icons";
 
 /**
- * AKSI UTAMA APLIKASI — tombol scan barcode yang dominan di tengah Beranda.
- * Pengguna harus langsung mengerti: BUKA APLIKASI → SCAN → LANJUT TRANSAKSI.
+ * AKSI UTAMA APLIKASI — tombol dominan di tengah Beranda menuju layar
+ * TRANSAKSI BARU (§5A): ketik nama barang ATAU scan barcode.
  */
 export function ScanHero() {
   return (
@@ -17,9 +17,9 @@ export function ScanHero() {
           <Icon name="barcode" className="h-9 w-9" />
         </span>
         <span className="min-w-0 flex-1 text-white">
-          <span className="block text-lg font-bold leading-snug">Scan Barang</span>
+          <span className="block text-lg font-bold leading-snug">Mulai Jualan</span>
           <span className="mt-0.5 block text-[13px] leading-snug text-white/85">
-            Mulai jualan — cukup scan barcode barang
+            Ketik nama barang atau scan barcode — catat bon sekali jalan
           </span>
         </span>
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/20 text-white">

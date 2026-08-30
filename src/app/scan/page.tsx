@@ -3,15 +3,16 @@ import { Suspense } from "react";
 import { ScanScreen } from "@/components/scan/ScanScreen";
 
 export const metadata: Metadata = {
-  title: "Scan Barang",
+  title: "Transaksi Baru",
 };
 
 /**
- * LAYAR SCAN — pusat alur jualan: scan → produk → jumlah → tunai/bon → simpan.
+ * LAYAR TRANSAKSI BARU (§5A) — cari/ketik ATAU scan → daftar → tunai/bon → simpan,
+ * semuanya pada SATU layar tanpa pindah halaman.
  */
 export default function ScanPage() {
   return (
-    <Suspense fallback={<div className="min-h-dvh bg-stone-950" />}>
+    <Suspense fallback={<div className="min-h-dvh bg-stone-100" />}>
       <ScanScreen />
     </Suspense>
   );

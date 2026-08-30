@@ -133,7 +133,7 @@ async function main(): Promise<void> {
     listenToNetworkEvents: false,
   });
   await engineOffline.init();
-  const transactionsA = new TransactionService({ localStore: localStoreA, syncEngine: engineOffline });
+  const transactionsA = new TransactionService({ localStore: localStoreA, syncEngine: engineOffline, repository: new GoogleSheetsStoreRepository(new NotConnectedGoogleApiClient()) });
   await transactionsA.createTransaction({
     paymentType: "CASH",
     items: [{ productId: "prd_x", productName: "Contoh", quantity: 2, unitPrice: 2000 }],
@@ -166,6 +166,14 @@ async function main(): Promise<void> {
   await engineOnline.init();
   const okSummary = await engineOnline.syncNow();
   check(okSummary.succeeded === 1 && (await localStoreA.getSyncQueue()).length === 0, "koneksi kembali → antrean terkirim & kosong");
+  check((await transactionsA.listTransactions()).length === 1, "riwayat transaksi TETAP di perangkat setelah terkirim (database utama = lokal)");
+  const localTrx = (await transactionsA.listTransactions())[0]!;
+  await transactionsA.markSynced(localTrx.id);
+  const markedTrx = (await transactionsA.listTransactions())[0]!;
+  check(
+    markedTrx.syncedAt !== null && (await transactionsA.getPendingTransactions()).length === 0,
+    "markSynced MENANDAI synced — bukan menghapus (Sheets = cadangan)",
+  );
 
   console.log("2) Produk (warisan Tahap 2)");
   const fakeClient = new FakeSheetsClient();
@@ -183,7 +191,7 @@ async function main(): Promise<void> {
     syncEngine: engine,
   });
   const customers = new CustomerService({ repository: new GoogleSheetsStoreRepository(new NotConnectedGoogleApiClient()), localStore, syncEngine: engine });
-  const transactions = new TransactionService({ localStore, syncEngine: engine });
+  const transactions = new TransactionService({ localStore, syncEngine: engine, repository: new GoogleSheetsStoreRepository(new NotConnectedGoogleApiClient()) });
   const sales = new SaleService(products, transactions, customers, engine);
 
   const indomie = await products.createProduct({
@@ -416,7 +424,7 @@ async function main(): Promise<void> {
 
   // TEST G — gagal menyimpan → transaksi tidak dianggap berhasil, stok utuh.
   class GagalSimpanStore extends MemoryLocalStore {
-    async addPendingTransaction(): Promise<void> {
+    async upsertTransaction(): Promise<void> {
       throw new Error("penyimpanan gagal");
     }
   }
@@ -426,7 +434,7 @@ async function main(): Promise<void> {
   const productsGagal = new ProductService({ repository: new GoogleSheetsStoreRepository(new NotConnectedGoogleApiClient()), localStore: gagalStore, syncEngine: engineGagal });
   const salesGagal = new SaleService(
     productsGagal,
-    new TransactionService({ localStore: gagalStore, syncEngine: engineGagal }),
+    new TransactionService({ localStore: gagalStore, syncEngine: engineGagal, repository: new GoogleSheetsStoreRepository(new NotConnectedGoogleApiClient()) }),
     new CustomerService({ repository: new GoogleSheetsStoreRepository(new NotConnectedGoogleApiClient()), localStore: gagalStore, syncEngine: engineGagal }),
     engineGagal,
   );
@@ -451,11 +459,80 @@ async function main(): Promise<void> {
     );
   }
 
+  // ================================================== TAHAP 5A
+  console.log("5) UJI PENERIMAAN TAHAP 5A — INPUT TRANSAKSI CEPAT");
+  // Simulasi warung nyata: satu transaksi 30 jenis barang (+ barang
+  // berulang → jumlah digabung UI menjadi satu baris qty 3).
+  const produk5a: Array<{ id: string; harga: number }> = [];
+  for (let i = 0; i < 30; i += 1) {
+    const created = await products.createProduct({
+      name: `Produk Uji 5A-${i}`,
+      barcode: `89955500${String(i).padStart(5, "0")}`,
+      category: "Snack",
+      currentPrice: 1000 + i * 100,
+      stock: 50,
+      unit: "pcs",
+    });
+    produk5a.push({ id: created.id, harga: created.currentPrice });
+  }
+
+  // Barang #0 dijual dengan harga khusus transaksi (override) —
+  // snapshot transaksi memakai override, harga master TIDAK berubah.
+  const hargaKhusus = 4321;
+  const sale5a = await sales.recordSale({
+    items: [
+      { productId: produk5a[0]!.id, quantity: 1, unitPrice: hargaKhusus },
+      { productId: produk5a[1]!.id, quantity: 3 }, // "barang sama 3×" → qty 3
+      ...produk5a.slice(2, 30).map((p) => ({ productId: p.id, quantity: 1 })),
+    ],
+    paymentType: "CASH",
+  });
+  check(sale5a.transaction.items.length === 30, "5A: transaksi 30 jenis barang tersimpan");
+  check(
+    sale5a.transaction.items[0]!.unitPrice === hargaKhusus,
+    "5A: harga khusus transaksi dipakai sebagai snapshot (4321)",
+  );
+  check(
+    (await products.getProductById(produk5a[0]!.id))?.currentPrice === produk5a[0]!.harga,
+    "5A: harga MASTER produk tidak ikut berubah oleh harga transaksi",
+  );
+  const totalHarapan =
+    hargaKhusus +
+    produk5a[1]!.harga * 3 +
+    produk5a.slice(2, 30).reduce((sum, p) => sum + p.harga, 0);
+  check(sale5a.transaction.total === totalHarapan, `5A: total 30 barang benar (${totalHarapan})`);
+  check(
+    (await products.getProductById(produk5a[1]!.id))?.stock === 47,
+    "5A: barang berulang (qty 3) memotong stok 50 → 47",
+  );
+
+  // BON cepat: pelanggan baru → buku bon terhubung.
+  const bon5a = await sales.recordSale({
+    items: [
+      { productId: produk5a[2]!.id, quantity: 2 },
+      { productId: produk5a[3]!.id, quantity: 1 },
+    ],
+    paymentType: "BON",
+    customerName: "Bu Siti 5A",
+  });
+  check(bon5a.transaction.paymentType === "BON", "5A: transaksi BON tersimpan");
+  const siti = (await customers.searchCustomers("siti 5a"))[0];
+  check(Boolean(siti), "5A: pelanggan BON ditemukan lewat pencarian cepat");
+  check(
+    siti?.outstandingBalance === bon5a.transaction.total,
+    "5A: buku bon pelanggan (outstandingBalance) menerima total transaksi",
+  );
+  const riwayat = await transactions.listTransactions();
+  check(
+    riwayat.length >= 2 && riwayat.some((t) => t.id === sale5a.transaction.id),
+    "5A: riwayat transaksi lokal memuat transaksi besar & bon",
+  );
+
   if (failures > 0) {
     console.error(`\nGAGAL: ${failures} pemeriksaan tidak lolos.`);
     process.exit(1);
   }
-  console.log("\nSemua pemeriksaan lolos — alur transaksi Tahap 3 berfungsi (lokal + Google Sheets).");
+  console.log("\nSemua pemeriksaan lolos — alur transaksi Tahap 3 + 5A berfungsi (lokal + Google Sheets).");
 }
 
 main().catch((error: unknown) => {

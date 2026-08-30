@@ -16,12 +16,17 @@ import type {
  * maupun layanan.
  */
 
-/** Kunci koleksi data lokal yang dikenal aplikasi. */
+/**
+ * Kunci koleksi data lokal yang dikenal aplikasi.
+ * `pendingTransactions` adalah kunci WARISAN (pra-offline-first) —
+ * dipertahankan agar migrasi data lama & clearAll tetap beres.
+ */
 export const LOCAL_STORE_KEYS = [
-  "products", // cache produk
-  "customers", // cache pelanggan
-  "pendingTransactions", // transaksi yang belum tersinkron
-  "syncQueue", // antrean operasi sinkronisasi
+  "products", // database produk lokal (utama)
+  "customers", // database pelanggan lokal (utama)
+  "transactions", // DATABASE TRANSAKSI LOKAL (utama; sync_status = syncedAt)
+  "pendingTransactions", // WARISAN — hanya untuk migrasi sekali jalan
+  "syncQueue", // antrean operasi menuju Google Sheets
   "syncStatus", // status sinkronisasi terakhir
   "storeProfile", // profil warung
 ] as const;
@@ -42,11 +47,23 @@ export interface LocalStore {
   setCachedCustomers(customers: Customer[]): Promise<void>;
   upsertCachedCustomer(customer: Customer): Promise<void>;
 
-  // ------------------------------------------- Transaksi tertunda (bon)
+  // ------------------------------------------------ Transaksi (UTAMA)
+  /**
+   * SELURUH transaksi di perangkat — ini adalah sumber baca utama
+   * (offline-first). sync_status per transaksi diturunkan dari
+   * `syncedAt`: null = PENDING (menunggu dikirim ke Sheets), terisi = SYNCED.
+   */
+  getAllTransactions(): Promise<Transaction[]>;
+  /** Simpan / perbarui satu transaksi (menjaga urutan terbaru dulu). */
+  upsertTransaction(transaction: Transaction): Promise<void>;
+  /** Timpa seluruh koleksi transaksi (hasil merge pull dari Sheets). */
+  replaceAllTransactions(transactions: Transaction[]): Promise<void>;
+  /** Tandai transaksi sudah tersinkron ke Google Sheets (JANGAN dihapus). */
+  markTransactionSynced(transactionId: string, syncedAt: string): Promise<void>;
+
+  // ------------------------------- Transaksi tertunda (warisan/diturunkan)
+  /** Transaksi yang belum tersinkron (syncedAt === null). */
   getPendingTransactions(): Promise<Transaction[]>;
-  addPendingTransaction(transaction: Transaction): Promise<void>;
-  /** Dipanggil setelah transaksi berhasil terkirim ke Google Sheets (Tahap 2). */
-  removePendingTransaction(transactionId: string): Promise<void>;
 
   // --------------------------------------------- Antrean sinkronisasi
   getSyncQueue(): Promise<SyncQueueItem[]>;

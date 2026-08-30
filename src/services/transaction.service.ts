@@ -4,6 +4,7 @@ import type {
   TransactionItem,
 } from "@/domain";
 import { PAYMENT_TYPES } from "@/domain";
+import type { StoreDataRepository } from "@/data/store-data-repository";
 import type { LocalStore } from "@/data/local/local-store";
 import type { SyncEngine } from "@/sync/sync-engine";
 import { nowISO } from "@/lib/datetime";
@@ -13,32 +14,40 @@ import { createPrefixedId } from "@/lib/id";
 export interface TransactionServiceDeps {
   localStore: LocalStore;
   syncEngine: SyncEngine;
+  /** Dibutuhkan untuk menarik (backup) transaksi dari Google Sheets. */
+  repository: StoreDataRepository;
 }
 
 /**
- * Logika aplikasi Transaksi.
+ * Logika aplikasi Transaksi — OFFLINE-FIRST:
  *
- * STATUS TAHAP 1: pencatatan transaksi pada tingkat layanan sudah berfungsi
- * (validasi → simpan lokal → antre sinkron) sebagai pembuktian arsitektur
- * offline-first. Alur POS lengkap (keranjang, pembayaran, potong stok, bon)
- * dibangun pada TAHAP 4 di atas layanan ini.
+ *   DATABASE UTAMA = perangkat (localStorage).
+ *   BACA  → selalu dari perangkat (riwayat lengkap, tanpa internet).
+ *   TULIS → simpan perangkat (sync_status: PENDING) → antre → Google Sheets.
+ *   SETELAH TERKIRIM → transaksi DITANDAI synced (TIDAK dihapus dari
+ *   perangkat) — Google Sheets hanyalah CADANGAN, bukan pengganti.
+ *
+ * Menarik data Sheets → perangkat (merge by id; transaksi lokal yang masih
+ * PENDING selalu menang agar tidak tertimpa sebelum terkirim).
  */
 export class TransactionService {
   private readonly localStore: LocalStore;
   private readonly syncEngine: SyncEngine;
+  private readonly repository: StoreDataRepository;
 
   constructor(deps: TransactionServiceDeps) {
     this.localStore = deps.localStore;
     this.syncEngine = deps.syncEngine;
+    this.repository = deps.repository;
   }
 
   /**
-   * Daftar transaksi. Tahap 1 hanya menampilkan transaksi tertunda lokal;
-   * Tahap 2+ menggabungkannya dengan data dari Google Sheets.
+   * Riwayat transaksi LENGKAP — dibaca dari database perangkat (utama).
+   * Berfungsi 100% tanpa internet.
    */
   async listTransactions(): Promise<Transaction[]> {
-    const pending = await this.localStore.getPendingTransactions();
-    return [...pending].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    const all = await this.localStore.getAllTransactions();
+    return [...all].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   }
 
   async getPendingTransactions(): Promise<Transaction[]> {
@@ -118,7 +127,8 @@ export class TransactionService {
       syncedAt: null,
     };
 
-    await this.localStore.addPendingTransaction(transaction);
+    // Database perangkat = UTAMA: simpan di sini dulu (PENDING), lalu antre.
+    await this.localStore.upsertTransaction(transaction);
     await this.syncEngine.enqueue({
       id: createPrefixedId("op"),
       kind: "CREATE",
@@ -129,8 +139,52 @@ export class TransactionService {
     return transaction;
   }
 
-  /** Dipanggil (Tahap 2) setelah operasi sinkron TRANSAKSI diterima remote. */
+  /**
+   * Setelah Google Sheets menerima transaksi: TANDAI synced, JANGAN hapus.
+   * Riwayat di perangkat tetap lengkap — Sheets hanyalah cadangan.
+   */
   async markSynced(transactionId: string): Promise<void> {
-    await this.localStore.removePendingTransaction(transactionId);
+    await this.localStore.markTransactionSynced(transactionId, nowISO());
+  }
+
+  /**
+   * Tarik transaksi dari Google Sheets ke perangkat (saat pertama online /
+   * sinkronkan manual). Merge berdasarkan ID:
+   * - transaksi lokal yang masih PENDING selalu menang (belum terkirim),
+   * - transaksi yang hanya ada di Sheets diunduh (ditandai synced),
+   * - keduanya sudah synced → ambil yang paling baru.
+   * Mengembalikan jumlah transaksi hasil gabungan.
+   */
+  async pullFromSheets(): Promise<number> {
+    const remote = await this.repository.getTransactions();
+    if (remote.length === 0) return (await this.localStore.getAllTransactions()).length;
+
+    const local = await this.localStore.getAllTransactions();
+    const byId = new Map(local.map((item) => [item.id, item]));
+    let changed = false;
+
+    for (const remoteItem of remote) {
+      const localItem = byId.get(remoteItem.id);
+      if (localItem && localItem.syncedAt === null) continue; // pending menang
+      if (localItem && (localItem.syncedAt ?? "") >= (remoteItem.syncedAt ?? "")) {
+        continue; // lokal sudah lebih baru
+      }
+      const merged: Transaction = {
+        ...remoteItem,
+        syncedAt: remoteItem.syncedAt ?? remoteItem.timestamp,
+      };
+      byId.set(remoteItem.id, merged);
+      changed = true;
+    }
+
+    if (changed) {
+      const merged = [...byId.values()].sort((a, b) =>
+        b.timestamp.localeCompare(a.timestamp),
+      );
+      // Tulis lewat upsert per item agar implementasi store bebas memilih
+      // struktur penyimpanan.
+      await this.localStore.replaceAllTransactions(merged);
+    }
+    return (await this.localStore.getAllTransactions()).length;
   }
 }
