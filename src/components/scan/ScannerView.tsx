@@ -81,6 +81,27 @@ function classifyCameraError(error: unknown, inIframe: boolean): ScannerStatus {
   return "error";
 }
 
+interface CameraChoice {
+  deviceId: string;
+  /** Label dibaca dari MediaDeviceInfo.label. Mungkin kosong sebelum izin. */
+  label: string;
+}
+
+/** Deteksi kamera tersedia. Daftar kosong = tidak ada / izin belum granted. */
+async function listCameras(): Promise<CameraChoice[]> {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) {
+    return [];
+  }
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  return devices
+    .filter((device) => device.kind === "videoinput")
+    .map((device, index) => ({
+      deviceId: device.deviceId,
+      // Label kosong artinya browser menunggu izin dulu. Beri nama sintetis.
+      label: device.label || `Kamera ${index + 1}`,
+    }));
+}
+
 /**
  * Tampilan kamera pemindai barcode (ZXing) — hanya berjalan di klien.
  *
@@ -104,6 +125,11 @@ export function ScannerView({
   const handledRef = useRef(false);
   const [status, setStatus] = useState<ScannerStatus>("starting");
   const [retryCount, setRetryCount] = useState(0);
+  const [cameras, setCameras] = useState<CameraChoice[]>([]);
+  const [activeDeviceId, setActiveDeviceId] = useState<string | null>(null);
+  // framesScanned membantu user yakin pemindai hidup — naik tiap callback
+  // dipanggil (jadi angka > 0 dalam ~1-2 dtk artinya stream & decoder bekerja).
+  const framesScannedRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,6 +141,30 @@ export function ScannerView({
 
     /** Mulai ulang pemindai (dipakai juga saat izin berubah jadi izinkan). */
     const restart = (): void => setRetryCount((count) => count + 1);
+
+    /** Minta izin kamera lebih dulu agar label kamera tersedia saat listing. */
+    async function primeCameraList(): Promise<void> {
+      if (
+        typeof navigator === "undefined" ||
+        !navigator.mediaDevices?.getUserMedia
+      ) {
+        return;
+      }
+      // Probe stream pendek — ini yang memicu popup izin. Setelah granted,
+      // enumerateDevices mengembalikan label asli, bukan nama sintetis.
+      try {
+        const probe = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
+        probe.getTracks().forEach((track) => track.stop());
+      } catch {
+        // Izin ditolak / tidak ada kamera — listCameras() akan return [].
+      }
+      const list = await listCameras();
+      if (cancelled) return;
+      setCameras(list);
+    }
 
     /** Pantau perubahan izin — begitu diizinkan, kamera menyala otomatis. */
     function watchPermission(): void {
@@ -189,19 +239,39 @@ export function ScannerView({
         // Minta resolusi tinggi + kamera belakang. Barcode ritel (EAN-13)
         // bergaris tipis; stream bawaan 640x480 sering terlalu kasar untuk
         // dibaca — 1280x720 jauh lebih andal untuk deteksi.
-        const constraints: MediaStreamConstraints = {
-          audio: false,
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-        };
+        const constraints: MediaStreamConstraints = activeDeviceId
+          ? {
+              audio: false,
+              video: {
+                deviceId: { exact: activeDeviceId },
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+              },
+            }
+          : {
+              audio: false,
+              video: {
+                facingMode: { ideal: "environment" },
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+              },
+            };
 
         const controls = await reader.decodeFromConstraints(
           constraints,
           video,
-          (result) => {
+          (result, error) => {
+            // ZXing selalu memanggil callback dengan error pada setiap frame
+            // yang tidak berisi barcode (NotFoundException normal). Hanya
+            // hitung "scan attempt" ketika ada result ATAU error lain.
+            if (result) {
+              framesScannedRef.current += 1;
+            } else if (
+              error &&
+              (error as { name?: string }).name !== "NotFoundException"
+            ) {
+              console.warn("[warungku] Scanner error non-NotFound:", error);
+            }
             if (cancelled || handledRef.current) return;
             const text = result?.getText?.()?.trim();
             if (!text) return;
@@ -219,6 +289,10 @@ export function ScannerView({
         }
         controlsRef.current = controls;
         setStatus("scanning");
+        // Setelah izin granted, daftar kamera sekarang punya label asli.
+        // Sinkronkan ulang supaya dropdown "Ganti Kamera" akurat.
+        const list = await listCameras();
+        if (!cancelled) setCameras(list);
 
         // Aktifkan fokus otomatis berkelanjutan bila perangkat mendukung,
         // supaya barcode cepat tajam. Diabaikan diam-diam bila tak didukung.
@@ -245,13 +319,22 @@ export function ScannerView({
       }
     }
 
-    void requestCamera();
+    void (async () => {
+      await primeCameraList();
+      if (cancelled) return;
+      await requestCamera();
+    })();
     return () => {
       cancelled = true;
       controlsRef.current?.stop();
       controlsRef.current = null;
     };
-  }, [onCode, retryCount]);
+  }, [onCode, retryCount, activeDeviceId]);
+
+  function handleSwitchCamera(deviceId: string) {
+    setActiveDeviceId((current) => (current === deviceId ? null : deviceId));
+    setRetryCount((count) => count + 1);
+  }
 
   const issue =
     status === "starting" || status === "scanning" || status === "stopped"
@@ -272,6 +355,37 @@ export function ScannerView({
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-stone-950/70 text-center">
           <span className="h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" />
           <p className="text-xs font-medium text-white/80">Menyiapkan kamera…</p>
+        </div>
+      ) : null}
+
+      {status === "scanning" ? (
+        <div className="pointer-events-none absolute bottom-2 left-2 right-2 flex items-center justify-between gap-2">
+          <span className="rounded-full bg-emerald-500/85 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
+            ● Memindai
+          </span>
+          {cameras.length > 1 ? (
+            <div className="pointer-events-auto flex max-w-[60%] flex-wrap justify-end gap-1.5">
+              {cameras.map((camera) => {
+                const isActive = (activeDeviceId ?? cameras[0]?.deviceId) === camera.deviceId;
+                return (
+                  <button
+                    key={camera.deviceId}
+                    type="button"
+                    onClick={() => handleSwitchCamera(camera.deviceId)}
+                    className={
+                      "max-w-[14rem] truncate rounded-full px-2.5 py-1 text-[10px] font-bold " +
+                      (isActive
+                        ? "bg-white text-stone-900"
+                        : "bg-white/15 text-white/90 active:bg-white/30")
+                    }
+                    title={camera.label}
+                  >
+                    {camera.label}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
