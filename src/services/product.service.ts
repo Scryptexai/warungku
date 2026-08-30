@@ -6,6 +6,7 @@ import type {
 import { PRODUCT_UNITS } from "@/domain";
 import type { LocalStore } from "@/data/local/local-store";
 import type { StoreDataRepository } from "@/data/store-data-repository";
+import { MASTER_PRODUCTS } from "@/data/master/master-products";
 import type { SyncEngine } from "@/sync/sync-engine";
 import { nowISO } from "@/lib/datetime";
 import { NotFoundError, ValidationError } from "@/lib/errors";
@@ -301,6 +302,38 @@ export class ProductService {
       }
     }
     return result;
+  }
+
+  /**
+   * SEED master offline (715 produk: 99 seed + 206 OFF barcode nyata + 410 kurasi)
+   * ke katalog lokal + antrean sinkronisasi. Idempotent: barcode yang sudah
+   * ada di katalog DILEWATI, bukan duplikat. Aman dipanggil berulang-ulang.
+   *
+   * - Lokal: tulis sekali via setCachedProducts (UI langsung muncul).
+   * - Sheets: enqueue per produk; sync engine kirim saat token Google hidup
+   *   (offline-first — antrean bertahan, tidak hilang saat refresh).
+   */
+  async seedFromMaster(): Promise<BulkImportResult> {
+    const inputs: CreateProductInput[] = MASTER_PRODUCTS.map((master) => ({
+      barcode: master.barcode,
+      name: master.name,
+      category: master.category,
+      currentPrice: master.suggestedPrice,
+      stock: 0, // master tidak tahu stok awal — kasir isi sendiri
+      unit: master.unit,
+    }));
+    return this.bulkCreateProducts(inputs);
+  }
+
+  /**
+   * VERSI AMAN: kalau katalog sudah terisi (mis. hasil pull Sheets atau
+   * sudah pernah seed), lewati. Pakai ini di bootstrap aplikasi.
+   * Mengembalikan ringkasan agar UI bisa menampilkan pesan konfirmasi.
+   */
+  async seedFromMasterIfEmpty(): Promise<BulkImportResult | null> {
+    const existing = await this.localStore.getCachedProducts();
+    if (existing.length > 0) return null;
+    return this.seedFromMaster();
   }
 
   /**

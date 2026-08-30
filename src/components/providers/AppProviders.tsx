@@ -35,6 +35,13 @@ export function AppProviders({ children }: { children: ReactNode }) {
     void container.syncEngine.init();
   }, [container]);
 
+  // Seed katalog kosong dengan 715 produk master offline (idempotent).
+  // Pemisahan agar provider layanan cukup murni: provider ini satu-satunya
+  // yang memutuskan "kapan" melakukan bootstrap.
+  useEffect(() => {
+    void container.products.seedFromMasterIfEmpty();
+  }, [container]);
+
   useEffect(() => {
     // PANAS-KAN APLIKASI saat senggang: prefetch semua menu utama + pustaka
     // scanner, sehingga pindah menu & membuka layar scan terasa instan.

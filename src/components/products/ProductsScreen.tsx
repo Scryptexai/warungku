@@ -118,6 +118,8 @@ export function ProductsScreen() {
   const [query, setQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+  const [seedReport, setSeedReport] = useState<string | null>(null);
 
   // Filter kategori — bisa pilih beberapa sekaligus.
   const [activeCategories, setActiveCategories] = useState<string[]>([]);
@@ -146,6 +148,37 @@ export function ProductsScreen() {
       setRefreshError(true);
     } finally {
       setRefreshing(false);
+    }
+  }
+
+  /**
+   * Tambah 715 produk master offline ke katalog lokal (idempotent by barcode).
+   * Aman dipanggil berkali-kali: barcode yang sudah ada dilewati, bukan
+   * diduplikasi. Antrean sinkron kirim ke Google Sheets saat token hidup.
+   * Pesan ringkas ditampilkan di atas daftar (menghilang sendiri).
+   */
+  async function handleSeedFromMaster() {
+    if (seeding) return;
+    setSeeding(true);
+    setSeedReport(null);
+    try {
+      const result = await products.seedFromMaster();
+      const created = result.created.length;
+      const skipped = result.skippedExisting.length;
+      const failed = result.failedRows.length;
+      reloadLocal();
+      setSeedReport(
+        created > 0
+          ? `✓ ${created} produk master ditambahkan.`
+          : skipped > 0
+            ? `Semua ${skipped} produk master sudah ada di katalog.`
+            : `Tidak ada produk yang ditambahkan (${failed} baris gagal).`,
+      );
+    } catch {
+      setSeedReport("Gagal menambah master. Coba lagi.");
+    } finally {
+      setSeeding(false);
+      window.setTimeout(() => setSeedReport(null), 4000);
     }
   }
 
@@ -299,6 +332,16 @@ export function ProductsScreen() {
             >
               <Icon name="check" className="h-5 w-5" />
             </button>
+            <button
+              type="button"
+              onClick={() => void handleSeedFromMaster()}
+              disabled={seeding}
+              aria-label="Impor 715 produk master offline ke katalog"
+              title="Impor 715 produk master offline ke katalog (idempotent)"
+              className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-stone-300 bg-white text-stone-600 active:opacity-80 disabled:opacity-50"
+            >
+              <Icon name="upload" className={cn("h-5 w-5", seeding && "animate-pulse")} />
+            </button>
             <Link
               href="/produk/tambah"
               className="inline-flex min-h-12 items-center justify-center gap-1.5 rounded-xl bg-brand-600 px-3.5 text-sm font-semibold text-white active:opacity-80"
@@ -309,6 +352,15 @@ export function ProductsScreen() {
           </>
         )}
       </div>
+
+      {seedReport ? (
+        <p
+          role="status"
+          className="rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-xs font-semibold text-brand-800"
+        >
+          {seedReport}
+        </p>
+      ) : null}
 
       {/* Filter kategori — pilih beberapa sekaligus */}
       {categories.length > 1 ? (
