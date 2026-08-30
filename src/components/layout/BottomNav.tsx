@@ -10,7 +10,8 @@ import { cn } from "@/lib/cn";
  * NAVIGASI BAWAH — pola dompet digital:
  * tombol SCAN besar & menonjol di TENGAH (aksi utama aplikasi), diapit
  * tab Beranda/Transaksi (kiri) dan Laporan/AI (kanan).
- * Layar scan tampil penuh tanpa navigasi agar immersion kamera maksimal.
+ * Layar scan memakai MINI-NAV: hanya pintasan ke Beranda (kembali ke
+ * dasbor) supaya kasir tidak pernah 'terjebak' di layar kamera.
  */
 
 function isActive(pathname: string, href: string): boolean {
@@ -56,9 +57,10 @@ function TabItem({
 export function BottomNav() {
   const pathname = usePathname() ?? "/";
 
-  // Layar scan adalah layar penuh — navigasi disembunyikan di sana.
+  // Layar scan memakai MINI-NAV: tombol Dasbor (kembali ke Beranda) +
+  // pintasan produk. Kasir tidak boleh terjebak di kamera.
   if (pathname === "/scan" || pathname.startsWith("/scan/")) {
-    return null;
+    return <ScanMiniNav />;
   }
 
   return (
@@ -98,6 +100,43 @@ export function BottomNav() {
             active={isActive(pathname, item.href)}
           />
         ))}
+      </div>
+    </nav>
+  );
+}
+
+/**
+ * MINI-NAV khusus layar /scan. Hanya dua pintasan supaya kamera tetap
+ * dapat ruang dan kasir tidak terjebak: Dasbor (kembali ke /) dan
+ * pintasan tambah produk manual.
+ */
+function ScanMiniNav() {
+  return (
+    <nav
+      aria-label="Navigasi layar scan"
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-stone-200 bg-white/95 pb-safe backdrop-blur"
+    >
+      <div className="mx-auto flex w-full max-w-lg items-stretch">
+        <Link
+          href="/"
+          aria-label="Kembali ke Dasbor"
+          className="flex min-h-14 flex-1 flex-col items-center justify-center gap-1 text-brand-700 active:bg-stone-50"
+        >
+          <span className="flex h-7 w-12 items-center justify-center rounded-full bg-brand-100">
+            <Icon name="home" className="h-5 w-5" />
+          </span>
+          <span className="text-[11px] font-bold leading-none">Dasbor</span>
+        </Link>
+        <Link
+          href="/produk/tambah?alur=manual"
+          aria-label="Tambah produk manual (tanpa scan)"
+          className="flex min-h-14 flex-1 flex-col items-center justify-center gap-1 text-stone-600 active:bg-stone-50"
+        >
+          <span className="flex h-7 w-12 items-center justify-center rounded-full">
+            <Icon name="plus" className="h-5 w-5" />
+          </span>
+          <span className="text-[11px] font-bold leading-none">Tambah Manual</span>
+        </Link>
       </div>
     </nav>
   );

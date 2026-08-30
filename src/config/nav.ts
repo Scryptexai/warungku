@@ -19,7 +19,7 @@ export interface NavItem {
 export const LEFT_NAV_ITEMS: NavItem[] = [
   {
     href: "/",
-    label: "Beranda",
+    label: "Dasbor",
     description: "Ringkasan warung & scan barang",
     icon: "home",
     phase: 1,
