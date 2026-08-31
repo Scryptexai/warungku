@@ -102,6 +102,27 @@ async function listCameras(): Promise<CameraChoice[]> {
     }));
 }
 
+/** Pendinginan minimum antar hasil decode (ms). Cegah noise / double-trigger. */
+const SCAN_COOLDOWN_MS = 1500;
+
+/**
+ * Validasi hasil decode ZXing. Menolak:
+ *   - string kosong atau lebih pendek dari 4 karakter (EAN/UPC/Code128 minimal).
+ *   - string lebih panjang dari 32 karakter (kode industri tidak lebih dari ini).
+ *   - karakter di luar charset barcode umum (A-Z 0-9 - . $ / + % spasi).
+ *   - pola berulang monoton (mis. "11111111", "12345678") yang khas artifact.
+ * Kedua panggilan terakhir harus berjarak ≥ SCAN_COOLDOWN_MS.
+ */
+function isPlausibleBarcode(raw: string, elapsedMs: number): boolean {
+  if (!raw) return false;
+  if (raw.length < 4 || raw.length > 32) return false;
+  if (elapsedMs > 0 && elapsedMs < SCAN_COOLDOWN_MS) return false;
+  if (!/^[A-Z0-9\-.$\/+% ]+$/i.test(raw)) return false;
+  // Tolak pola monoton berulang (semua digit sama).
+  if (/^(.)\1+$/.test(raw)) return false;
+  return true;
+}
+
 /**
  * Tampilan kamera pemindai barcode (ZXing) — hanya berjalan di klien.
  *
@@ -116,13 +137,20 @@ async function listCameras(): Promise<CameraChoice[]> {
  */
 export function ScannerView({
   onCode,
+  /** Bypass filter + cooldown (dipakai oleh input manual yang sudah divalidasi). */
+  bypassGuard = false,
 }: {
   /** Dipanggil sekali per sesi scan dengan isi barcode yang terbaca. */
   onCode: (code: string) => void;
+  /** True untuk panggilan sintetis (mis. input manual) yang sudah divalidasi user. */
+  bypassGuard?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const controlsRef = useRef<ScannerControls | null>(null);
   const handledRef = useRef(false);
+  /** Timestamp decode terakhir yang lolos — cooldown supaya ZXing tidak
+   *  memanggil onCode berulang dari frame yang sama. */
+  const lastHandledAtRef = useRef(0);
   const [status, setStatus] = useState<ScannerStatus>("starting");
   const [retryCount, setRetryCount] = useState(0);
   const [cameras, setCameras] = useState<CameraChoice[]>([]);
@@ -273,13 +301,28 @@ export function ScannerView({
               console.warn("[warungku] Scanner error non-NotFound:", error);
             }
             if (cancelled || handledRef.current) return;
-            const text = result?.getText?.()?.trim();
-            if (!text) return;
+            const raw = result?.getText?.()?.trim() ?? "";
+            if (!raw) return;
+            // Guard: tolak hasil ZXing yang terlihat seperti noise (angka
+            // acak dari frame blur/gambar tak jelas). Panjang minimal 4,
+            // maksimal 32 (EAN/UPC/Code128 umumnya 4-14), charset alfabet-
+            // numerik umum barcode. Bypass untuk input manual.
+            if (
+              !bypassGuard &&
+              !isPlausibleBarcode(raw, Date.now() - lastHandledAtRef.current)
+            ) {
+              console.warn(
+                "[warungku] Scanner: hasil diabaikan (tidak plausible):",
+                raw,
+              );
+              return;
+            }
+            lastHandledAtRef.current = Date.now();
             handledRef.current = true;
             controlsRef.current?.stop();
             controlsRef.current = null;
             setStatus("stopped");
-            onCode(text);
+            onCode(raw);
           },
         );
 
@@ -329,7 +372,7 @@ export function ScannerView({
       controlsRef.current?.stop();
       controlsRef.current = null;
     };
-  }, [onCode, retryCount, activeDeviceId]);
+  }, [onCode, retryCount, activeDeviceId, bypassGuard]);
 
   function handleSwitchCamera(deviceId: string) {
     setActiveDeviceId((current) => (current === deviceId ? null : deviceId));

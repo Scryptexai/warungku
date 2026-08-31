@@ -17,6 +17,7 @@ import { SaleResultSheet } from "./SaleResultSheet";
 import { findMasterByBarcode } from "@/data/master/master-products";
 
 type View = "input" | "pay" | "result";
+type InputMode = "search" | "scan";
 
 /**
  * PHASE 5C — Rapid Transaction UX.
@@ -51,6 +52,7 @@ export function ScanScreen() {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanKey, setScanKey] = useState(0);
   const [view, setView] = useState<View>("input");
+  const [inputMode, setInputMode] = useState<InputMode>("search");
   const [saving, setSaving] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [saleResult, setSaleResult] = useState<{
@@ -159,6 +161,7 @@ export function ScanScreen() {
     cart.clear();
     setSaleResult(null);
     setQuery("");
+    setInputMode("search");
     setView("input");
     handleScanAgain();
     void catalog.reloadLocal();
@@ -212,6 +215,8 @@ export function ScanScreen() {
 
         {view === "input" ? (
           <InputSurface
+            inputMode={inputMode}
+            setInputMode={setInputMode}
             query={query}
             setQuery={setQuery}
             onPickFromSearch={pickFromSearch}
@@ -290,6 +295,8 @@ export function ScanScreen() {
  * products + cart ringkas (urut ke bawah). Tidak ada modal.
  */
 function InputSurface({
+  inputMode,
+  setInputMode,
   query,
   setQuery,
   onPickFromSearch,
@@ -298,6 +305,8 @@ function InputSurface({
   searchInputRef,
   cart,
 }: {
+  inputMode: InputMode;
+  setInputMode: (mode: InputMode) => void;
   query: string;
   setQuery: (value: string) => void;
   onPickFromSearch: (product: Product) => void;
@@ -331,15 +340,19 @@ function InputSurface({
 
   return (
     <div className="space-y-4">
-      <CameraStrip scanKey={scanKey} onCode={onScan} />
+      <ModeToggle mode={inputMode} onChange={setInputMode} />
 
-      <SearchPanel
-        query={query}
-        setQuery={setQuery}
-        searchInputRef={searchInputRef}
-        results={results}
-        onPick={onPickFromSearch}
-      />
+      {inputMode === "scan" ? (
+        <ScanSurface scanKey={scanKey} onCode={onScan} />
+      ) : (
+        <SearchPanel
+          query={query}
+          setQuery={setQuery}
+          searchInputRef={searchInputRef}
+          results={results}
+          onPick={onPickFromSearch}
+        />
+      )}
 
       <QuickProducts onPick={onPickFromSearch} />
 
@@ -348,7 +361,64 @@ function InputSurface({
   );
 }
 
-function CameraStrip({
+/**
+ * Mode toggle — pisahkan input manual (search + quick) dari scan barcode.
+ * Kasir banyak yang pakai search manual, jadi kamera tidak auto-on.
+ * Tap "Scan" → kamera menyala, panel scan lebih besar. Tap "Cari" →
+ * kamera off, fokus ke search field.
+ */
+function ModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: InputMode;
+  onChange: (mode: InputMode) => void;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Mode input produk"
+      className="inline-flex w-full rounded-xl bg-stone-200 p-1"
+    >
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mode === "search"}
+        onClick={() => onChange("search")}
+        className={
+          "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition-colors " +
+          (mode === "search"
+            ? "bg-white text-stone-900 shadow-sm"
+            : "text-stone-600")
+        }
+      >
+        <Icon name="search" className="h-4 w-4" />
+        Cari Manual
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mode === "scan"}
+        onClick={() => onChange("scan")}
+        className={
+          "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition-colors " +
+          (mode === "scan"
+            ? "bg-white text-stone-900 shadow-sm"
+            : "text-stone-600")
+        }
+      >
+        <Icon name="barcode" className="h-4 w-4" />
+        Scan Barcode
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Permukaan scan — kamera besar + tombol manual inline. Hanya di-render
+ * saat mode === "scan" supaya kamera tidak nyala saat kasir tidak butuh.
+ */
+function ScanSurface({
   scanKey,
   onCode,
 }: {
@@ -356,79 +426,67 @@ function CameraStrip({
   onCode: (code: string) => void | Promise<void>;
 }) {
   const [manualCode, setManualCode] = useState("");
-  const [manualOpen, setManualOpen] = useState(false);
   const [manualError, setManualError] = useState<string | null>(null);
+
+  function submitManual() {
+    const code = manualCode.trim();
+    if (!code) {
+      setManualError("Masukkan kode barcode terlebih dahulu.");
+      return;
+    }
+    setManualError(null);
+    void onCode(code);
+    setManualCode("");
+  }
 
   return (
     <section
       aria-label="Area scan barcode"
       className="rounded-2xl bg-stone-950 p-3 text-white ring-1 ring-stone-200"
     >
-      <div className="flex items-center gap-3">
-        <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-stone-900">
-          <ScannerView key={scanKey} onCode={onCode} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-bold">Arahkan kamera ke barcode</p>
-          <p className="mt-0.5 text-[10px] text-white/60">
-            Barang dikenal → langsung masuk keranjang.
-          </p>
-          {manualOpen ? (
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                const code = manualCode.trim();
-                if (!code) {
-                  setManualError("Masukkan kode barcode terlebih dahulu.");
-                  return;
-                }
-                setManualError(null);
-                void onCode(code);
-                setManualCode("");
-                setManualOpen(false);
-              }}
-              className="mt-2 flex gap-1.5"
-            >
-              <input
-                value={manualCode}
-                onChange={(event) => setManualCode(event.target.value)}
-                placeholder="Ketik kode"
-                inputMode="numeric"
-                autoComplete="off"
-                aria-label="Kode barcode manual"
-                className="min-h-9 flex-1 rounded-lg border border-white/20 bg-white/10 px-2 text-xs text-white outline-none placeholder:text-white/40"
-              />
-              <button
-                type="submit"
-                className="min-h-9 rounded-lg bg-brand-600 px-3 text-xs font-bold text-white active:opacity-80"
-              >
-                Cari
-              </button>
-            </form>
-          ) : (
-            <div className="mt-2 flex gap-1.5">
-              <button
-                type="button"
-                onClick={() => setManualOpen(true)}
-                className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-bold text-white/80 active:bg-white/20"
-              >
-                Kode manual
-              </button>
-              <Link
-                href="/produk/tambah?alur=manual"
-                className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-bold text-white/80 active:bg-white/20"
-              >
-                Tambah Manual
-              </Link>
-            </div>
-          )}
-          {manualError ? (
-            <p className="mt-1 text-[10px] text-amber-300" role="alert">
-              {manualError}
-            </p>
-          ) : null}
-        </div>
+      <div className="relative aspect-[4/3] w-full overflow-hidden rounded-xl bg-stone-900">
+        <ScannerView key={scanKey} onCode={onCode} />
+        <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-emerald-500/85 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+          ● Memindai
+        </span>
       </div>
+      <p className="mt-2 text-xs text-white/70">
+        Barang dikenal otomatis. Scan ulang barang sama = tambah jumlah.
+      </p>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          submitManual();
+        }}
+        className="mt-3 flex gap-2"
+      >
+        <input
+          value={manualCode}
+          onChange={(event) => setManualCode(event.target.value)}
+          placeholder="Atau ketik kode barcode di sini…"
+          inputMode="numeric"
+          autoComplete="off"
+          aria-label="Kode barcode manual"
+          className="min-h-11 flex-1 rounded-lg border border-white/20 bg-white/10 px-3 text-sm text-white outline-none placeholder:text-white/40 focus:border-white/40"
+        />
+        <button
+          type="submit"
+          className="min-h-11 rounded-lg bg-brand-600 px-4 text-sm font-bold text-white active:opacity-80"
+        >
+          Cari
+        </button>
+      </form>
+      {manualError ? (
+        <p className="mt-1 text-xs text-amber-300" role="alert">
+          {manualError}
+        </p>
+      ) : null}
+      <Link
+        href="/produk/tambah?alur=manual"
+        className="mt-2 inline-block text-[11px] font-semibold text-white/70 underline"
+      >
+        Tambah produk baru (tanpa barcode)
+      </Link>
     </section>
   );
 }
