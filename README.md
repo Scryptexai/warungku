@@ -7,7 +7,7 @@ bahasa Indonesia sehari-hari.
 
 ---
 
-## Status: PHASE 7 — Reporting & Business Dashboard ✅
+## Status: PHASE 8 — AI Business Assistant ✅
 
 > Alur transaksi disusun ulang mengikuti cara kerja warung NYATA (§5A):
 > pemilik mencatat banyak nama barang dengan cepat — harga & total
@@ -33,7 +33,7 @@ bahasa Indonesia sehari-hari.
 | **Input transaksi cepat SATU layar (§5A)** — cari/ketik + scan, jumlah nyambung, harga khusus transaksi | ✅ |
 | **Mesin transaksi OFFLINE-FIRST (§5B)** — commit lokal = sukses; Sheets hanya tujuan sinkron | ✅ |
 | **Katalog barcode NYATA (§5D)** — 229 produk terverifikasi GS1, 509 barcode sintetis dipensiunkan + auto-pembersih, validasi di semua pintu masuk | ✅ |
-| AI agent / business intelligence | ⏳ Tahap 7 (menunggu instruksi) |
+| **Asisten AI Toko (§8)** — tanya omzet/terlaris/stok/bon dgn jawaban berbasis data lokal; perhitungan deterministik, model jarak jauh opsional | ✅ |
 | Mock data & pengujian menyeluruh | ⏳ Tahap 7 |
 | Hardening produksi & deployment | ⏳ Tahap 8 |
 
@@ -80,6 +80,41 @@ BUKA APLIKASI → TRANSAKSI BARU (ketik nama ATAU scan — satu layar, §5A)
   Kasus lain (bingkai pratinjau, kamera dipakai aplikasi lain, kamera tidak
   ada, HTTP tidak aman) didiagnosis spesifik + tombol **Buka di Tab Baru**.
   Kode manual selalu tersedia sebagai jalur cadangan.
+
+### Asisten AI Toko (§8)
+
+AI sebagai **lapisan penalaran terkendali** di atas data toko — bukan chatbot
+umum. Alur: PERTANYAAN → INTENSI (kata kunci deterministik) → KUERI DATA
+LOKAL TERARAH → FAKTA TERSTRUKTUR → (model menjelaskan bila tersedia) →
+JAWABAN + SUMBER DATA.
+
+- **Alat data terpisah** (`src/services/ai/store-data-tools.ts`): getSalesSummary,
+  getProductSales, getStockStatus, getBonSummary, getCustomerBon,
+  compareSalesPeriods, getProfitStatus — LLM tidak pernah mengakses database
+  langsung; hanya menerima ringkasan fakta (privasi terjaga).
+- **Semua angka dihitung aplikasi** (total, selisih, persen) — model hanya
+  menjelaskan; mencegah halusinasi aritmetika.
+- **Jawaban selalu mencantumkan sumber** + periode data (mis. "Transaksi
+  minggu ini (31 Agu – 1 Sep 2026 WIB) · data perangkat").
+- **Anti-halusinasi**: data tak tersedia → dijawab jujur ("harga modal belum
+  tersedia" untuk pertanyaan keuntungan); pertanyaan di luar data toko →
+  ditolak sopan TANPA dikirim ke model; produk tak dikenal → "tidak
+  ditemukan".
+- **Aturan stok deterministik**: "perlu diperhatikan" = stok sekarang <
+  terjual 7 hari terakhir (bukan prediksi); "sepi" = terjual ≤ 2 pada periode.
+- **Penyedia bisa diganti** (`AiProvider`): default = penjelas LOKAL
+  deterministik (offline, tanpa model); opsional = model kompatibel OpenAI
+  (alamat/model/kunci milik pemilik, disimpan di perangkat, timeout 20 dtk).
+- **Aman**: model gagal/offline → jawaban lokal otomatis; kasir & semua fitur
+  tak terpengaruh. AI hanya MEMBACA — tidak mengubah harga/stok/transaksi/bon.
+- Layar `/ai` (tab bawah "AI"): pertanyaan cepat per kategori (Penjualan,
+  Produk, Stok, Bon) + ketik bebas.
+
+Uji otomatis (smoke 128; §8 = TEST 1–10): omzet/terlaris/bon/persen =
+kueri deterministik · keuntungan ditolak jujur · halusinasi ditolak ·
+model mati → fallback lokal · kasir offline tetap jalan · privasi (payload
+fakta < 1,2 KB, tanpa transaksi mentah) · adapter OpenAI-compatible ·
+720 produk/520 transaksi → 3 jawaban dalam 7 ms.
 
 ### Dashboard & laporan bisnis (§7)
 
