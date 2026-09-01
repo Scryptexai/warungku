@@ -8,7 +8,7 @@ import type { LocalStore } from "@/data/local/local-store";
 import type { StoreDataRepository } from "@/data/store-data-repository";
 import { MASTER_PRODUCTS } from "@/data/master/master-products";
 import { RETIRED_BARCODES } from "@/data/master/retired-barcodes";
-import { validateBarcode } from "@/lib/barcode";
+import { normalizeBarcode, validateBarcode } from "@/lib/barcode";
 import type { SyncEngine } from "@/sync/sync-engine";
 import { nowISO } from "@/lib/datetime";
 import { NotFoundError, ValidationError } from "@/lib/errors";
@@ -407,6 +407,41 @@ export class ProductService {
     const existing = await this.localStore.getCachedProducts();
     if (existing.length > 0) return null;
     return this.seedFromMaster();
+  }
+
+  /**
+   * §5D+ SINKRON MASTER INKREMENTAL (dipakai bootstrap): tambahkan produk
+   * master yang BELUM ada di katalog warung — mencocokkan barcode terhadap
+   * SELURUH produk lokal (aktif maupun non-aktif), sehingga:
+   * - perangkat lama (katalog 241) OTOMATIS menerima entri master baru
+   *   (415+) tanpa reset data,
+   * - produk yang sudah ada TIDAK disentuh (harga/stok/nama pemilik
+   *   tetap otoritatif),
+   * - produk yang sengaja dinon-aktifkan pemilik TIDAK dimunculkan lagi.
+   * Idempotent: dijalankan berulang tidak menduplikasi.
+   */
+  async syncFromMaster(): Promise<BulkImportResult> {
+    const existing = await this.localStore.getCachedProducts();
+    if (existing.length === 0) return this.seedFromMaster();
+    const known = new Set(
+      existing
+        .filter((product) => product.barcode)
+        .map((product) => normalizeBarcode(product.barcode!)),
+    );
+    const missing = MASTER_PRODUCTS.filter(
+      (master) => !known.has(normalizeBarcode(master.barcode)),
+    );
+    const empty: BulkImportResult = { created: [], skippedExisting: [], failedRows: [] };
+    if (missing.length === 0) return empty;
+    const inputs: CreateProductInput[] = missing.map((master) => ({
+      barcode: master.barcode,
+      name: master.name,
+      category: master.category,
+      currentPrice: master.suggestedPrice ?? 0,
+      stock: 0, // master tidak tahu stok awal — pemilik isi sendiri
+      unit: master.unit,
+    }));
+    return this.bulkCreateProducts(inputs);
   }
 
   /**

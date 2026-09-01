@@ -40,11 +40,13 @@ export function AppProviders({ children }: { children: ReactNode }) {
   // yang memutuskan "kapan" melakukan bootstrap.
   useEffect(() => {
     // §5D: (1) bersihkan barcode sintetis warisan seed 5C (produk tetap,
-    //     barcode dinolkan), lalu (2) seed katalog kosong dengan master
-    //     barcode-NYATA. Keduanya idempotent.
+    //     barcode dinolkan), lalu (2) sinkron master barcode-NYATA secara
+    //     INKREMENTAL — katalog kosong diisi penuh, katalog lama menerima
+    //     entri master BARU tanpa menyentuh harga/stok/nama milik pemilik.
+    //     Keduanya idempotent.
     void (async () => {
       await container.products.purgeRetiredBarcodes();
-      await container.products.seedFromMasterIfEmpty();
+      await container.products.syncFromMaster();
     })();
   }, [container]);
 

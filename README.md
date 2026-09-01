@@ -32,7 +32,7 @@ bahasa Indonesia sehari-hari.
 | **PWA** — aplikasi bisa dipasang & dibuka tanpa internet | ✅ |
 | **Input transaksi cepat SATU layar (§5A)** — cari/ketik + scan, jumlah nyambung, harga khusus transaksi | ✅ |
 | **Mesin transaksi OFFLINE-FIRST (§5B)** — commit lokal = sukses; Sheets hanya tujuan sinkron | ✅ |
-| **Katalog barcode NYATA (§5D)** — 415 produk terverifikasi GS1 (diperluas dari panen OFF halaman 5–9), 509 barcode sintetis dipensiunkan + auto-pembersih, validasi di semua pintu masuk | ✅ |
+| **Katalog barcode NYATA (§5D)** — 415 produk terverifikasi GS1 (diperluas dari panen OFF halaman 5–9), 509 barcode sintetis dipensiunkan + auto-pembersih, validasi di semua pintu masuk; **sinkron master inkremental** — perangkat lama otomatis menerima entri master baru tanpa reset data | ✅ |
 | **Asisten AI Toko (§8)** — tanya omzet/terlaris/stok/bon dgn jawaban berbasis data lokal; perhitungan deterministik, model jarak jauh opsional | ✅ |
 | Mock data & pengujian menyeluruh | ⏳ Tahap 7 |
 | Hardening produksi & deployment | ⏳ Tahap 8 |

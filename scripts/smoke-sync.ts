@@ -765,6 +765,65 @@ async function main(): Promise<void> {
     "5D migrasi: produk TETAP ada, barcode-nya dinolkan (scan tak salah arah)",
   );
 
+  // f) SINKRON MASTER INKREMENTAL: perangkat LAMA (katalog terisi) menerima
+  //    entri master baru tanpa reset & tanpa menyentuh data pemilik.
+  const storeMs = new MemoryLocalStore();
+  const repoMs = new GoogleSheetsStoreRepository(new NotConnectedGoogleApiClient());
+  const engineMs = new QueueSyncEngine({ target: new NotConnectedSyncTarget(), localStore: storeMs, listenToNetworkEvents: false });
+  await engineMs.init();
+  const productsMs = new ProductService({ repository: repoMs, localStore: storeMs, syncEngine: engineMs });
+
+  const masterA = MASTER_PRODUCTS[0]!;
+  const masterB = MASTER_PRODUCTS[1]!;
+  // Produk pemilik dgn barcode master (harga diedit 9.999) + produk non-master
+  // + produk master yang sengaja DINON-AKTIFKAN pemilik.
+  const ownerEdited = await productsMs.createProduct({
+    name: masterA.name, barcode: masterA.barcode, category: masterA.category,
+    currentPrice: 9999, stock: 7, unit: masterA.unit,
+  });
+  const nonMaster = await productsMs.createProduct({
+    name: "Barang Sendiri", barcode: gs1Barcode("899555000001"), category: "Lainnya",
+    currentPrice: 5000, stock: 3, unit: "pcs",
+  });
+  const ownerHidden = await productsMs.createProduct({
+    name: masterB.name, barcode: masterB.barcode, category: masterB.category,
+    currentPrice: 1000, stock: 2, unit: masterB.unit,
+  });
+  await productsMs.updateProduct(ownerHidden.id, { isActive: false });
+
+  const synced = await productsMs.syncFromMaster();
+  const catalogMs = await productsMs.listProducts();
+  const barcodeSetMs = new Set(
+    catalogMs.filter((item) => item.barcode).map((item) => normalizeBarcode(item.barcode!)),
+  );
+  check(
+    synced.created.length === MASTER_PRODUCTS.length - 2 &&
+      catalogMs.length === 3 + (MASTER_PRODUCTS.length - 2),
+    `5D sinkron: katalog lama (+3 produk pemilik) menerima ${MASTER_PRODUCTS.length - 2} entri master baru`,
+  );
+  check(
+    MASTER_PRODUCTS.every((m) => barcodeSetMs.has(normalizeBarcode(m.barcode))),
+    "5D sinkron: SELURUH barcode master kini dikenali di katalog warung",
+  );
+  const ownerAfter = (await productsMs.getProductById(ownerEdited.id))!;
+  check(
+    ownerAfter.currentPrice === 9999 && ownerAfter.stock === 7 &&
+      catalogMs.filter((item) => normalizeBarcode(item.barcode ?? "") === normalizeBarcode(masterA.barcode)).length === 1,
+    "5D sinkron: harga/stok produk milik pemilik TIDAK tersentuh (tanpa duplikat)",
+  );
+  const hiddenAfter = (await productsMs.getProductById(ownerHidden.id))!;
+  check(
+    hiddenAfter.isActive === false &&
+      catalogMs.filter((item) => normalizeBarcode(item.barcode ?? "") === normalizeBarcode(masterB.barcode)).length === 1,
+    "5D sinkron: produk yang dinon-aktifkan pemilik TIDAK dimunculkan lagi",
+  );
+  await productsMs.syncFromMaster(); // idempoten
+  check(
+    (await productsMs.listProducts()).length === catalogMs.length,
+    "5D sinkron: dijalankan ulang → tidak menduplikasi (idempoten)",
+  );
+  void nonMaster;
+
   // ================================================== TAHAP 6
   console.log("8) UJI PENERIMAAN TAHAP 6 — MESIN TRANSAKSI OFFLINE");
   // Perangkat uji §6: lokal murni, TANPA internet sama sekali.
