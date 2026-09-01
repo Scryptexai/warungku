@@ -12,7 +12,13 @@ import { computeBulkPrice } from "@/lib/pricing";
 import { cn } from "@/lib/cn";
 
 /** Satu baris produk — kartu seluler: nama, harga, stok (info terpenting). */
-function ProductRow({ product }: { product: Product }) {
+function ProductRow({
+  product,
+  lowStock,
+}: {
+  product: Product;
+  lowStock?: boolean;
+}) {
   return (
     <Link
       href={`/produk/${product.id}`}
@@ -40,8 +46,15 @@ function ProductRow({ product }: { product: Product }) {
             product.stock === 0 ? "font-semibold text-red-500" : "text-stone-400",
           )}
         >
-          {product.stock === 0 ? "Stok habis" : `Stok ${formatNumberID(product.stock)}`}
+          {product.stock === 0
+            ? "Stok habis"
+            : `Stok ${formatNumberID(product.stock)}`}
         </span>
+        {lowStock && product.stock > 0 ? (
+          <span className="mt-0.5 inline-block rounded-full bg-amber-100 px-1.5 text-[10px] font-bold text-amber-700">
+            Menipis
+          </span>
+        ) : null}
       </span>
     </Link>
   );
@@ -115,6 +128,11 @@ export function ProductsScreen() {
   const { products } = useApp();
   const { products: catalogProducts, ensureLocal, refreshFromSheets, lastSheetsFetchAt, reloadLocal } =
     useCatalog();
+  // §7: penanda "Menipis" mengikuti batas yang ditetapkan pemilik per produk.
+  const [thresholds, setThresholds] = useState<Record<string, number>>({});
+  useEffect(() => {
+    void products.getLowStockThresholds().then(setThresholds);
+  }, [products]);
   const [query, setQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState(false);
@@ -546,7 +564,16 @@ export function ProductsScreen() {
             />
           ))
         ) : (
-          filtered.map((product) => <ProductRow key={product.id} product={product} />)
+          filtered.map((product) => (
+            <ProductRow
+              key={product.id}
+              product={product}
+              lowStock={
+                thresholds[product.id] !== undefined &&
+                product.stock <= thresholds[product.id]!
+              }
+            />
+          ))
         )}
       </div>
 

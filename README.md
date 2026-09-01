@@ -7,7 +7,7 @@ bahasa Indonesia sehari-hari.
 
 ---
 
-## Status: PHASE 6 — Offline Transaction Engine ✅
+## Status: PHASE 7 — Reporting & Business Dashboard ✅
 
 > Alur transaksi disusun ulang mengikuti cara kerja warung NYATA (§5A):
 > pemilik mencatat banyak nama barang dengan cepat — harga & total
@@ -80,6 +80,48 @@ BUKA APLIKASI → TRANSAKSI BARU (ketik nama ATAU scan — satu layar, §5A)
   Kasus lain (bingkai pratinjau, kamera dipakai aplikasi lain, kamera tidak
   ada, HTTP tidak aman) didiagnosis spesifik + tombol **Buka di Tab Baru**.
   Kode manual selalu tersedia sebagai jalur cadangan.
+
+### Dashboard & laporan bisnis (§7)
+
+Semua angka dihitung MURNI dari data perangkat (offline), memakai harga
+SNAPSHOT transaksi. OMZET ≠ LABA — harga beli (`costPrice`) tidak dihitung
+karena datanya tidak tersedia (aturan §7).
+
+- **Lapisan laporan murni** `src/lib/reports.ts`: `summarizeTransactions`
+  (omzet, jumlah, tunai/bon + jumlah masing-masing, pelunasan terpisah),
+  `topProducts`, `slowMovingProducts` (aturan DETERMINISTIK terjual ≤ 2 —
+  konstanta di kode, bukan AI), `stockOverview`, `bonCustomerSummaries`,
+  `breakdownForRange`, dan `buildReportDocument` → **ReportDocument
+  ber-tipe & dapat ditanyakan** (fondasi §8 — tanpa AI di fase ini).
+- **Periode kalender asli** (hari ini / minggu Senin–Minggu / tanggal 1)
+  dengan batas **Asia/Jakarta** (`APP_TIME_ZONE`) — konsisten dengan jam
+  tampilan aplikasi, bukan zona perangkat.
+- **Akurasi**: Tunai + Bon = Omzet (rekonsiliasi eksak, diuji otomatis).
+  Pelunasan bon dicatat terpisah — bukan omzet (penjualan bonnya sudah
+  dihitung pada hari transaksi bon dibuat).
+- **Pelunasan menandai bon LUNAS**: saat piutang pelanggan habis, seluruh
+  transaksi bonnya berubah `paymentStatus: PAID` (lokal, jejak pelunasan
+  tetap tercatat sebagai transaksi "Bayar Bon").
+- **Penanda stok menipis**: preferensi lokal per produk
+  (`lowStockThresholds`) — tanpa aturan otomatis yang dikarang; produk tanpa
+  batas tidak ditandai.
+- **Ekspor lokal** `src/lib/report-export.ts` + `src/lib/pdf.ts` (penulis
+  PDF minimal tanpa dependensi): CSV (";" + BOM, ramah Excel Indonesia) dan
+  PDF teks — semuanya dirakit di perangkat, sesuai periode/filter terpilih.
+- Layar: **/laporan** = dashboard periode + rincian harian + terlaris +
+  jarang terjual + stok + bon aktif + ekspor; **/transaksi** menambah filter
+  tanggal (Semua/Hari/Minggu/Bulan), pencarian ID transaksi, dan ekspor CSV
+  sesuai filter aktif.
+
+Uji otomatis (smoke 114; §7 = TEST 1–10 + pelunasan + kinerja): omzet =
+hitungan manual 144.500 · 6 tunai + 3 bon · tunai+bon=omzet · peringkat
+(Aqua 12 → Indomie 7 → Kopi 6) · jarang terjual deterministik · snapshot
+harga 3.000 tetap setelah harga jadi 3.500 · cari bon "Budi" lokal · stok
+dashboard = database + penanda menipis · batas hari WIB (23.30 kemarin
+di luar hari ini) · pelunasan penuh → bon PAID & keluar dari daftar aktif ·
+offline penuh (antrean tertahan, laporan tetap utuh) · CSV & PDF terverifikasi
+isi · kinerja 720 produk / 520 transaksi / 2.080 item → dasbor lengkap
+±0,7 dtk.
 
 ### Mesin transaksi offline penuh (§6)
 

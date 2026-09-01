@@ -20,6 +20,7 @@ export class MemoryLocalStore implements LocalStore {
   private customers: Customer[] = [];
   private transactions: Transaction[] = [];
   private activeCart: CartItemSnapshot[] = [];
+  private lowStockThresholds: Record<string, number> = {};
   private syncQueue: SyncQueueItem[] = [];
   private syncStatus: SyncStatusSnapshot | null = null;
 
@@ -110,6 +111,14 @@ export class MemoryLocalStore implements LocalStore {
     this.activeCart = [...items];
   }
 
+  async getLowStockThresholds(): Promise<Record<string, number>> {
+    return { ...this.lowStockThresholds };
+  }
+
+  async setLowStockThresholds(thresholds: Record<string, number>): Promise<void> {
+    this.lowStockThresholds = { ...thresholds };
+  }
+
   async getSyncQueue(): Promise<SyncQueueItem[]> {
     return [...this.syncQueue];
   }
@@ -147,6 +156,7 @@ export class MemoryLocalStore implements LocalStore {
     this.customers = [];
     this.transactions = [];
     this.activeCart = [];
+    this.lowStockThresholds = {};
     this.syncQueue = [];
     this.syncStatus = null;
   }

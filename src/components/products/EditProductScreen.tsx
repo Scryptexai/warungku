@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useApp } from "@/components/providers/AppProviders";
 import { useCatalog } from "@/components/providers/CatalogProvider";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { LinkButton } from "@/components/ui/LinkButton";
@@ -13,14 +14,27 @@ import { ProductForm, type EditableProduct } from "./ProductForm";
  */
 export function EditProductScreen({ productId }: { productId: string }) {
   const router = useRouter();
+  const { products: productsService } = useApp();
   const { products, ensureLocal } = useCatalog();
   const [editable, setEditable] = useState<EditableProduct | null | undefined>(
     undefined,
   );
+  // §7: batas stok menipis (preferensi lokal pemilik, bukan data produk).
+  const [threshold, setThreshold] = useState<number | null>(null);
 
   useEffect(() => {
     void ensureLocal();
   }, [ensureLocal]);
+
+  useEffect(() => {
+    let active = true;
+    void productsService
+      .getLowStockThresholds()
+      .then((all) => active && setThreshold(all[productId] ?? null));
+    return () => {
+      active = false;
+    };
+  }, [productsService, productId]);
 
   useEffect(() => {
     if (products === null) return; // masih memuat
@@ -64,6 +78,13 @@ export function EditProductScreen({ productId }: { productId: string }) {
       product={editable}
       cancelHref={`/produk/${productId}`}
       onSaved={() => router.replace(`/produk/${productId}`)}
+      lowStockThreshold={{
+        value: threshold,
+        onSave: async (next) => {
+          await productsService.setLowStockThreshold(productId, next);
+          setThreshold(next);
+        },
+      }}
     />
   );
 }

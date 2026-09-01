@@ -206,6 +206,14 @@ export class BrowserLocalStore implements LocalStore {
     this.write("activeCart", items);
   }
 
+  async getLowStockThresholds(): Promise<Record<string, number>> {
+    return this.read<Record<string, number>>("lowStockThresholds", {});
+  }
+
+  async setLowStockThresholds(thresholds: Record<string, number>): Promise<void> {
+    this.write("lowStockThresholds", thresholds);
+  }
+
   // ------------------------------------------------------ Status sinkronisasi
 
   async getSyncStatus(): Promise<SyncStatusSnapshot | null> {

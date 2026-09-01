@@ -31,6 +31,7 @@ export const LOCAL_STORE_KEYS = [
   "syncStatus", // status sinkronisasi terakhir
   "storeProfile", // profil warung
   "activeCart", // §6: keranjang transaksi berjalan (tahan restart)
+  "lowStockThresholds", // §7: batas stok menipis per produk (preferensi pemilik)
 ] as const;
 export type LocalStoreKey = (typeof LOCAL_STORE_KEYS)[number];
 
@@ -91,6 +92,12 @@ export interface LocalStore {
    */
   getActiveCart(): Promise<CartItemSnapshot[]>;
   setActiveCart(items: CartItemSnapshot[]): Promise<void>;
+
+  // ------------------------------------- Batas stok menipis per produk (§7)
+  // Preferensi pemilik (productId → batas). BUKAN database stok kedua —
+  // nilai stok tetap hanya ada di entitas produk lokal.
+  getLowStockThresholds(): Promise<Record<string, number>>;
+  setLowStockThresholds(thresholds: Record<string, number>): Promise<void>;
 
   // ------------------------------------------------------------ Utilitas
   /** Menghapus seluruh data lokal (dipakai saat putus koneksi warung). */

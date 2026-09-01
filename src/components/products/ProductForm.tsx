@@ -81,6 +81,7 @@ export function ProductForm({
   initialUnit,
   cancelHref,
   onSaved,
+  lowStockThreshold,
 }: {
   mode: "create" | "edit";
   product?: EditableProduct;
@@ -93,6 +94,11 @@ export function ProductForm({
   initialUnit?: string;
   cancelHref: string;
   onSaved: (product: Product) => void;
+  /** §7 opsional (mode edit): batas stok menipis milik produk ini. */
+  lowStockThreshold?: {
+    value: number | null;
+    onSave: (threshold: number | null) => Promise<void>;
+  };
 }) {
   const { products } = useApp();
   const { applyProduct } = useCatalog();
@@ -110,6 +116,11 @@ export function ProductForm({
   const [duplicate, setDuplicate] = useState<DuplicateInfo | null>(null);
   const [genericError, setGenericError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [threshold, setThreshold] = useState(
+    lowStockThreshold?.value === null || lowStockThreshold?.value === undefined
+      ? ""
+      : String(lowStockThreshold.value),
+  );
 
   const pricePreview = price.trim() ? formatIDR(Number(digitsOnly(price))) : null;
 
@@ -161,6 +172,13 @@ export function ProductForm({
               stock: stockValueSafe,
               unit,
             });
+      // Simpan juga batas stok menipis bila layar menyediakannya (§7).
+      if (lowStockThreshold) {
+        const parsedThreshold = threshold.trim()
+          ? parseWholeNumber(threshold)
+          : null;
+        await lowStockThreshold.onSave(parsedThreshold);
+      }
       // Terapkan langsung ke cache sesi — daftar produk instan tanpa muat ulang.
       applyProduct(saved);
       onSaved(saved);
@@ -344,6 +362,24 @@ export function ProductForm({
             <FieldError message={errors.stock} />
           </label>
         </div>
+
+        {lowStockThreshold ? (
+          <label className="block">
+            <FieldLabel
+              text="Batas Stok Menipis (opsional)"
+              hint="tandai produk ini saat stok ≤ batas"
+            />
+            <input
+              value={threshold}
+              onChange={(event) => setThreshold(digitsOnly(event.target.value))}
+              placeholder="kosongkan bila tidak ingin ditandai"
+              inputMode="numeric"
+              autoComplete="off"
+              aria-label="Batas stok menipis"
+              className={inputClass}
+            />
+          </label>
+        ) : null}
 
         <div>
           <FieldLabel text="Satuan" hint="satuan jual barang" />

@@ -8,6 +8,9 @@ import { Icon } from "@/components/ui/icons";
 import { LinkButton } from "@/components/ui/LinkButton";
 import type { SyncQueueItem, Transaction } from "@/domain";
 import { formatIDR } from "@/lib/money";
+import { rangeStart } from "@/lib/reports";
+import { dayKeyInTZ } from "@/lib/datetime";
+import { downloadCsv, transactionsToCsv } from "@/lib/report-export";
 import { cn } from "@/lib/cn";
 
 const TABS = ["Semua", "Tunai", "Bon"] as const;
@@ -228,11 +231,19 @@ function TransactionDetailSheet({
  * Instan & berfungsi tanpa internet; status sinkron ke Google Sheets
  * tampil per transaksi.
  */
+const DATE_RANGES = [
+  { key: "all", label: "Semua" },
+  { key: "today", label: "Hari Ini" },
+  { key: "week", label: "Minggu Ini" },
+  { key: "month", label: "Bulan Ini" },
+] as const;
+
 export function TransactionsScreen() {
   const { transactions, ensureLocal } = useCatalog();
   const { sync } = useApp();
   const [tab, setTab] = useState<Tab>("Semua");
   const [query, setQuery] = useState("");
+  const [dateRange, setDateRange] = useState<"all" | "today" | "week" | "month">("all");
   const [opened, setOpened] = useState<Transaction | null>(null);
   const [queue, setQueue] = useState<SyncQueueItem[]>([]);
 
@@ -273,16 +284,22 @@ export function TransactionsScreen() {
     let list = transactions;
     if (tab === "Tunai") list = list.filter((t) => t.paymentType !== "BON");
     if (tab === "Bon") list = list.filter((t) => t.paymentType === "BON");
+    // Filter tanggal §7: batas periode mengikuti zona waktu aplikasi.
+    if (dateRange !== "all") {
+      const from = rangeStart(dateRange).getTime();
+      list = list.filter((t) => new Date(t.timestamp).getTime() >= from);
+    }
     const q = query.trim().toLowerCase();
     if (q) {
       list = list.filter(
         (t) =>
+          t.id.toLowerCase().includes(q) ||
           t.customer?.name.toLowerCase().includes(q) ||
           t.items.some((item) => item.productName.toLowerCase().includes(q)),
       );
     }
     return list;
-  }, [transactions, tab, query]);
+  }, [transactions, tab, query, dateRange]);
 
   const pendingCount = useMemo(
     () => transactions?.filter((t) => t.syncedAt === null).length ?? 0,
@@ -329,6 +346,44 @@ export function TransactionsScreen() {
           className="min-h-12 w-full rounded-xl border border-stone-200 bg-white pl-10 pr-3 text-sm text-stone-900 outline-none placeholder:text-stone-400 focus:border-brand-400"
         />
       </div>
+
+      <div className="flex items-center gap-1.5">
+        {DATE_RANGES.map((item) => {
+          const active = dateRange === item.key;
+          return (
+            <button
+              key={item.key}
+              type="button"
+              aria-pressed={active}
+              onClick={() => setDateRange(item.key)}
+              className={cn(
+                "min-h-8 flex-1 rounded-full border px-2 text-[11px] font-semibold transition-colors",
+                active
+                  ? "border-brand-600 bg-brand-50 text-brand-700"
+                  : "border-stone-200 bg-white text-stone-500",
+              )}
+            >
+              {item.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {filtered !== null && filtered.length > 0 ? (
+        <button
+          type="button"
+          onClick={() =>
+            downloadCsv(
+              `transaksi-warungku-${dayKeyInTZ(new Date())}.csv`,
+              transactionsToCsv(filtered),
+            )
+          }
+          className="flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-stone-900 text-xs font-bold text-white active:scale-[0.99]"
+        >
+          <Icon name="receipt" className="h-4 w-4" />
+          Ekspor CSV ({filtered.length} transaksi terfilter)
+        </button>
+      ) : null}
 
       {pendingCount > 0 ? (
         <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800">

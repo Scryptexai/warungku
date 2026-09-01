@@ -74,6 +74,21 @@ export class ProductService {
     );
   }
 
+  /** Batas stok menipis per produk (preferensi lokal pemilik, §7). */
+  async getLowStockThresholds(): Promise<Record<string, number>> {
+    return this.localStore.getLowStockThresholds();
+  }
+
+  async setLowStockThreshold(productId: string, threshold: number | null): Promise<void> {
+    const thresholds = await this.localStore.getLowStockThresholds();
+    if (threshold === null || !Number.isFinite(threshold) || threshold < 0) {
+      delete thresholds[productId];
+    } else {
+      thresholds[productId] = Math.round(threshold);
+    }
+    await this.localStore.setLowStockThresholds(thresholds);
+  }
+
   async getProductById(id: string): Promise<Product | null> {
     const products = await this.localStore.getCachedProducts();
     return products.find((product) => product.id === id) ?? null;

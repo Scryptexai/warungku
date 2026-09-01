@@ -213,6 +213,23 @@ export class CustomerService {
       };
       customers[index] = next;
       await this.localStore.setCachedCustomers(customers);
+      // §7: piutang habis → seluruh bon pelanggan ini ditandai LUNAS di
+      // database lokal (tampilan riwayat/dashboard akurat). Pelunasan
+      // parsial membiarkan bon tetap BELUM LUNAS. Pembaruan ini lokal;
+      // Sheets tetap menerima jejak pelunasan via transaksi "Bayar Bon".
+      if (next.outstandingBalance === 0) {
+        const transactions = await this.localStore.getAllTransactions();
+        const updated = transactions.map((trx) =>
+          trx.paymentType === "BON" &&
+          trx.paymentStatus === "UNPAID" &&
+          trx.customer?.id === next.id
+            ? { ...trx, paymentStatus: "PAID" as const }
+            : trx,
+        );
+        if (updated.some((trx, i) => trx !== transactions[i])) {
+          await this.localStore.replaceAllTransactions(updated);
+        }
+      }
       await this.syncEngine.enqueue({
         id: createPrefixedId("op"),
         kind: "UPDATE",

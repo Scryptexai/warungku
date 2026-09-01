@@ -21,6 +21,19 @@ import { parseProductCsv } from "../src/lib/csv";
 import { MASTER_PRODUCTS, findMasterByBarcode } from "../src/data/master/master-products";
 import { RETIRED_BARCODES } from "../src/data/master/retired-barcodes";
 import { addToCart, cartTotal, type CartItem } from "../src/lib/cart";
+import {
+  bonCustomerSummaries,
+  buildReportDocument,
+  slowMovingProducts,
+  stockOverview,
+  summarizeTransactions,
+  topProducts,
+} from "../src/lib/reports";
+import {
+  reportToCsv,
+  reportToPdf,
+  transactionsToCsv,
+} from "../src/lib/report-export";
 import { NotConnectedGoogleApiClient } from "../src/data/google/google-api-client";
 import type { GoogleApiClient, GoogleApiClientRequest } from "../src/data/google/google-api-client";
 import { GoogleSheetsStoreRepository } from "../src/data/google/google-sheets-store-repository";
@@ -872,11 +885,225 @@ async function main(): Promise<void> {
     check(all6.length === after12.length, "6.ROLLBACK: transaksi gagal tidak tersisa (konsisten dgn stok)");
   }
 
+  // ================================================== TAHAP 7
+  console.log("9) UJI PENERIMAAN TAHAP 7 — DASHBOARD & LAPORAN (OFFLINE)");
+  const store7 = new MemoryLocalStore();
+  const repo7 = new GoogleSheetsStoreRepository(new NotConnectedGoogleApiClient());
+  const engine7 = new QueueSyncEngine({ target: new NotConnectedSyncTarget(), localStore: store7, listenToNetworkEvents: false });
+  await engine7.init();
+  const products7 = new ProductService({ repository: repo7, localStore: store7, syncEngine: engine7 });
+  const customers7 = new CustomerService({ repository: repo7, localStore: store7, syncEngine: engine7 });
+  const transactions7 = new TransactionService({ localStore: store7, syncEngine: engine7, repository: repo7 });
+  customers7.attachTransactionService(transactions7);
+
+  const pAqua7 = await products7.createProduct({ name: "Aqua 600ml", barcode: "8886008101053", category: "Minuman", currentPrice: 3000, stock: 100, unit: "pcs" });
+  const pMie7 = await products7.createProduct({ name: "Indomie Goreng", barcode: "0089686010947", category: "Makanan Instan", currentPrice: 3500, stock: 50, unit: "pcs" });
+  const pKopi7 = await products7.createProduct({ name: "Kopi Kapal Api", barcode: gs1Barcode("8992388100017".slice(0, 12)), category: "Minuman", currentPrice: 2000, stock: 50, unit: "pcs" });
+  const pGula7 = await products7.createProduct({ name: "Gula Pasir 1kg", barcode: gs1Barcode("899276111111"), category: "Sembako", currentPrice: 12000, stock: 10, unit: "pcs" });
+  const pRokok7 = await products7.createProduct({ name: "Rokok A", barcode: gs1Barcode("899212222222"), category: "Rokok", currentPrice: 24000, stock: 30, unit: "pack" });
+
+  // Zona waktu aplikasi = Asia/Jakarta: 1 Sep 2026 12.00 WIB.
+  const now7 = new Date("2026-09-01T12:00:00+07:00");
+  const iso = (wib: string) => `2026-${wib}:00+07:00` as const;
+
+  // Transaksi HARI INI (1 Sep, WIB) — 5 CASH + 3 BON + 1 CASH dini hari.
+  const mkTrx = (args: { ts: string; pay: "CASH" | "BON"; cust?: string; items: Array<[typeof pAqua7, number]> }) =>
+    transactions7.createTransaction({
+      timestamp: iso(args.ts),
+      paymentType: args.pay,
+      customer: args.cust ? { id: null, name: args.cust } : null,
+      items: args.items.map(([product, qty]) => ({ productId: product.id, barcode: product.barcode, productName: product.name, quantity: qty, unitPrice: product.currentPrice })),
+    });
+  await mkTrx({ ts: "09-01T00:15", pay: "CASH", items: [[pMie7, 2]] }); // 7.000
+  await mkTrx({ ts: "09-01T08:01", pay: "CASH", items: [[pAqua7, 2]] }); // 6.000
+  await mkTrx({ ts: "09-01T08:20", pay: "CASH", items: [[pMie7, 1], [pKopi7, 3]] }); // 9.500
+  await mkTrx({ ts: "09-01T09:00", pay: "CASH", items: [[pGula7, 1]] }); // 12.000
+  await mkTrx({ ts: "09-01T09:30", pay: "CASH", items: [[pRokok7, 2]] }); // 48.000
+  await mkTrx({ ts: "09-01T10:00", pay: "CASH", items: [[pKopi7, 1]] }); // 2.000
+  await mkTrx({ ts: "09-01T10:30", pay: "BON", cust: "Budi", items: [[pAqua7, 10]] }); // 30.000
+  await mkTrx({ ts: "09-01T11:00", pay: "BON", cust: "Andi", items: [[pMie7, 4]] }); // 14.000
+  await mkTrx({ ts: "09-01T11:15", pay: "BON", cust: "Siti", items: [[pKopi7, 2], [pGula7, 1]] }); // 16.000
+  // Kemarin (31 Agu 23.30 WIB) — HARUS di luar "hari ini", di dalam "minggu ini".
+  await mkTrx({ ts: "08-31T23:30", pay: "CASH", items: [[pAqua7, 1]] }); // 3.000
+
+  // TEST 1 — omzet cocok dengan hitungan manual.
+  const sToday = summarizeTransactions(await transactions7.listTransactions(), "today", now7);
+  check(sToday.omzet === 144500, "7.T1 OMZET: dashboard = hitungan manual (144.500)");
+  // TEST 2 — jumlah CASH/BON.
+  check(sToday.cashCount === 6 && sToday.bonCount === 3, "7.T2 CASH/BON: 6 tunai + 3 bon");
+  // TEST 3 — rekonsiliasi eksak.
+  check(sToday.cashTotal + sToday.bonTotal === sToday.omzet, "7.T3 REKONSILIASI: tunai 84.500 + bon 60.000 = omzet 144.500");
+  // TEST 7 — filter tanggal + batas zona waktu (23.30 kemarin di luar hari ini).
+  check(
+    sToday.transactionCount === 9 && summarizeTransactions(await transactions7.listTransactions(), "week", now7).omzet === 147500,
+    "7.T7 TANGGAL: hanya transaksi hari ini (WIB); minggu ini ikut menghitung kemarin",
+  );
+  // TEST 4 — peringkat produk dari item transaksi.
+  const top7 = topProducts(await transactions7.listTransactions(), "today", 3, now7);
+  check(
+    top7.length === 3 && top7[0]!.name === "Aqua 600ml" && top7[0]!.quantity === 12 &&
+      top7[1]!.name === "Indomie Goreng" && top7[1]!.quantity === 7 && top7[2]!.quantity === 6,
+    "7.T4 PERINGKAT: Aqua 12 → Indomie 7 → Kopi 6",
+  );
+  // Jarang terjual — aturan deterministik (terjual ≤ 2).
+  const slow7 = slowMovingProducts(await transactions7.listTransactions(), await products7.listProducts(), "today", {}, now7);
+  check(
+    slow7.some((i) => i.name === "Rokok A" && i.quantity === 2) &&
+      slow7.some((i) => i.name === "Gula Pasir 1kg" && i.quantity === 2) &&
+      !slow7.some((i) => i.name === "Aqua 600ml"),
+    "7.JARANG: aturan deterministik terjual≤2 (Rokok & Gula masuk, Aqua tidak)",
+  );
+  // TEST 8 — harga snapshot: ubah harga → lama tetap harga A.
+  await products7.updateProduct(pAqua7.id, { currentPrice: 3500 });
+  const sAfter = summarizeTransactions(await transactions7.listTransactions(), "today", now7);
+  const topAfter = topProducts(await transactions7.listTransactions(), "today", 1, now7);
+  check(
+    sAfter.omzet === 144500 && topAfter[0]!.revenue === 36000,
+    "7.T8 SNAPSHOT: harga jadi 3.500 → laporan lama tetap 3.000 (12×3.000)",
+  );
+
+  // BON dashboard + stok + pelunasan (recordSale nyata, waktu sesungguhnya).
+  const sales7 = new SaleService(products7, transactions7, customers7, engine7);
+  await sales7.recordSale({ items: [{ productId: pAqua7.id, quantity: 3 }], paymentType: "BON", customerName: "Budi" });
+  await sales7.recordSale({ items: [{ productId: pKopi7.id, quantity: 2 }], paymentType: "BON", customerName: "Andi" });
+  await sales7.recordSale({ items: [{ productId: pGula7.id, quantity: 1 }], paymentType: "BON", customerName: "Siti" });
+
+  // TEST 6 — cari pelanggan bon secara lokal.
+  const allBon7 = bonCustomerSummaries(await customers7.listCustomers(), await transactions7.listTransactions());
+  const budiOnly = allBon7.filter((c) => c.name.toLowerCase().includes("budi"));
+  check(
+    allBon7.length === 3 && budiOnly.length === 1 && budiOnly[0]!.name === "Budi" && budiOnly[0]!.unpaidTotal === 10500,
+    "7.T6 BON CARI: \"Budi\" → hanya Budi (sisa 10.500, 1 bon)",
+  );
+  // TEST 5 — stok dashboard = basis data produk lokal.
+  await products7.setLowStockThreshold(pGula7.id, 10); // 10 − 1 terjual = 9 ≤ 10 → menipis
+  const stock7 = stockOverview(await products7.listProducts(), await products7.getLowStockThresholds());
+  const aquaStock = stock7.find((i) => i.productId === pAqua7.id)!;
+  const gulaStock = stock7.find((i) => i.productId === pGula7.id)!;
+  const dbAqua = (await products7.getProductById(pAqua7.id))!.stock;
+  check(
+    aquaStock.stock === dbAqua && dbAqua === 97 && aquaStock.lowStock === false &&
+      gulaStock.lowStock === true,
+    "7.T5 STOK: dashboard = database (Aqua 97); penanda Menipis hanya bila batas ditetapkan",
+  );
+
+  // Pelunasan: piutang habis → bon ditandai LUNAS + tidak dihitung sebagai omzet.
+  const budi7 = (await customers7.listCustomers()).find((c) => c.name === "Budi")!;
+  await customers7.settleBon(budi7.id, 10500); // pelunasan PENUH
+  const trxs7 = await transactions7.listTransactions();
+  const budiPaid = trxs7.filter((t) => t.customer?.id === budi7.id && t.paymentType === "BON");
+  const settle7 = summarizeTransactions(trxs7, "today");
+  check(
+    budiPaid.length === 1 && budiPaid[0]!.paymentStatus === "PAID" &&
+      settle7.settlementTotal === 10500 && settle7.cashTotal + settle7.bonTotal === settle7.omzet,
+    "7.PELUNASAN: bon Budi LUNAS; pelunasan 10.500 bukan omzet; rekonsiliasi tetap eksak",
+  );
+  const bonAfter7 = bonCustomerSummaries(await customers7.listCustomers(), trxs7);
+  check(bonAfter7.length === 2 && !bonAfter7.some((c) => c.name === "Budi"), "7.PELUNASAN: Budi hilang dari daftar bon aktif");
+
+  // TEST 9 — offline penuh: engine TIDAK terhubung, laporan tetap lengkap.
+  // Hanya transaksi berstempel eksplisit 1 Sep (Set A) — pisahkan dari
+  // transaksi pelunasan/bon sesungguhnya agar asersi eksak deterministik.
+  const setA7 = trxs7.filter((t) => t.timestamp.endsWith("+07:00"));
+  const doc7 = buildReportDocument({
+    transactions: setA7, products: await products7.listProducts(),
+    customers: await customers7.listCustomers(), range: "today", now: now7,
+  });
+  check(
+    doc7.summary.omzet === 144500 && doc7.breakdown.length >= 7 && doc7.topProducts.length > 0 &&
+      (await engine7.getQueue()).length > 0,
+    "7.T9 OFFLINE: dokumen laporan utuh tanpa jaringan (antrean sync tetap tertahan)",
+  );
+
+  // TEST 10 — ekspor CSV & PDF (dirakit lokal, isi terverifikasi).
+  const csv7 = reportToCsv(doc7);
+  check(
+    csv7.startsWith("Laporan Penjualan Warungku") &&
+      csv7.includes("Omzet;144500") && csv7.includes("Tunai (CASH);84500") &&
+      csv7.includes("Bon (BON);60000") && csv7.includes("Aqua 600ml;12;36000") &&
+      csv7.includes("Rokok A;2"),
+    "7.T10 CSV: ringkasan + peringkat + jarang terjual sesuai periode terpilih",
+  );
+  const trxCsv7 = transactionsToCsv(trxs7);
+  check(trxCsv7.includes("trx_") && trxCsv7.split("\r\n").length === trxs7.length + 1, "7.T10 CSV: daftar transaksi = jumlah baris data");
+  const pdf7 = reportToPdf(doc7);
+  const pdfText7 = Buffer.from(pdf7).toString("latin1");
+  const startxref7 = Number(/startxref\s+(\d+)/.exec(pdfText7)?.[1] ?? "0");
+  check(
+    pdf7.length > 1500 && pdfText7.startsWith("%PDF") &&
+      pdfText7.includes("LAPORAN PENJUALAN WARUNGKU") &&
+      pdfText7.includes("PRODUK TERLARIS") && pdfText7.includes("BON PELANGGAN") &&
+      startxref7 > 0 && startxref7 < pdf7.length,
+    "7.T10 PDF: struktur valid & memuat ringkasan, terlaris, bon",
+  );
+
+  // PERFORMANCE — dataset besar: 720 produk, 520 transaksi, 2.080 item.
+  // Ditulis LANGSUNG ke store lokal (tanpa antrean sinkron) agar yang
+  // terukur murni kinerja LAPORAN, bukan backoff jaringan.
+  const storeP = new MemoryLocalStore();
+  const catalogP: Product[] = Array.from({ length: 720 }, (_, i) => ({
+    id: `prd_perf_${i}`,
+    barcode: gs1Barcode(`89977${String(i).padStart(7, "0")}`),
+    name: `Produk Uji ${i}`,
+    currentPrice: 1500,
+    costPrice: null,
+    stock: 100,
+    unit: "pcs" as const,
+    category: "Uji",
+    isActive: true,
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+  }));
+  await storeP.setCachedProducts(catalogP);
+  const trxsP: Transaction[] = Array.from({ length: 520 }, (_, i) => {
+    const day = 3 + (i % 28); // 3–30 Agustus 2026 (WIB)
+    const items = [0, 1, 2, 3].map((k) => {
+      const product = catalogP[(i * 4 + k) % 720]!;
+      return {
+        transactionId: `trx_perf_${i}`,
+        productId: product.id,
+        barcode: product.barcode,
+        productName: product.name,
+        quantity: 2,
+        unitPrice: 1500,
+        subtotal: 3000,
+      };
+    });
+    return {
+      id: `trx_perf_${i}`,
+      timestamp: `2026-08-${String(day).padStart(2, "0")}T1${i % 8}:00:00+07:00`,
+      customer: i % 4 === 0 ? { id: null, name: `Pelanggan ${i % 13}` } : null,
+      paymentType: i % 4 === 0 ? "BON" : "CASH",
+      total: 12000,
+      status: "COMPLETED" as const,
+      paymentStatus: i % 4 === 0 ? ("UNPAID" as const) : ("PAID" as const),
+      items,
+      note: null,
+      syncedAt: null,
+    };
+  });
+  for (const trx of trxsP) await storeP.upsertTransaction(trx);
+  const nowP = new Date("2026-08-31T12:00:00+07:00");
+  const t0Perf = Date.now();
+  const docP = buildReportDocument({
+    transactions: trxsP, products: catalogP,
+    customers: [], range: "month", now: nowP,
+    stockThresholds: { prd_perf_1: 5 },
+  });
+  const summarizeMs = Date.now() - t0Perf;
+  check(
+    docP.summary.transactionCount === 520 && docP.summary.omzet === 6240000 &&
+      docP.summary.cashTotal + docP.summary.bonTotal === docP.summary.omzet,
+    "7.PERF: 520 transaksi / 2.080 item → omzet 6.240.000 eksak",
+  );
+  check(summarizeMs < 1500, `7.PERF: dashboard lengkap < 1,5 dtk (aktual ${summarizeMs} ms, 720 produk)`);
+
   if (failures > 0) {
     console.error(`\nGAGAL: ${failures} pemeriksaan tidak lolos.`);
     process.exit(1);
   }
-  console.log("\nSemua pemeriksaan lolos — alur transaksi Tahap 3 + 5A + 5B + 5D + 6 berfungsi (lokal + Google Sheets).");
+  console.log("\nSemua pemeriksaan lolos — alur transaksi Tahap 3 + 5A + 5B + 5D + 6 + 7 (dashboard & laporan offline) berfungsi.");
+  process.exit(0); // timer backoff engine sinkron tidak menahan proses uji
 }
 
 main().catch((error: unknown) => {
