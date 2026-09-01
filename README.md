@@ -7,7 +7,7 @@ bahasa Indonesia sehari-hari.
 
 ---
 
-## Status: PHASE 5B — Offline-First Transaction Engine ✅
+## Status: PHASE 5D — Product Catalog Revalidation & Real Barcode Data ✅
 
 > Alur transaksi disusun ulang mengikuti cara kerja warung NYATA (§5A):
 > pemilik mencatat banyak nama barang dengan cepat — harga & total
@@ -32,6 +32,7 @@ bahasa Indonesia sehari-hari.
 | **PWA** — aplikasi bisa dipasang & dibuka tanpa internet | ✅ |
 | **Input transaksi cepat SATU layar (§5A)** — cari/ketik + scan, jumlah nyambung, harga khusus transaksi | ✅ |
 | **Mesin transaksi OFFLINE-FIRST (§5B)** — commit lokal = sukses; Sheets hanya tujuan sinkron | ✅ |
+| **Katalog barcode NYATA (§5D)** — 229 produk terverifikasi GS1, 509 barcode sintetis dipensiunkan + auto-pembersih, validasi di semua pintu masuk | ✅ |
 | AI agent / business intelligence | ⏳ Tahap 7 (menunggu instruksi) |
 | Mock data & pengujian menyeluruh | ⏳ Tahap 7 |
 | Hardening produksi & deployment | ⏳ Tahap 8 |
@@ -150,18 +151,24 @@ pelanggan — semuanya lolos.
 
 Scan yang tidak menemukan produk di katalog warung TIDAK berhenti —
 
-1. **Master bawaan (offline)** — `src/data/master/` — **715 produk**:
-   - 509 produk kurasi warung (mi instan, minuman, snack, rokok, bahan
-     masak, kebutuhan rumah) dengan harga rekomendasi warung. Barcode
-     kurasi = template EAN-13 valid (digit cek dihitung), BUKAN nomor
-     terdaftar resmi.
-   - 206 produk Indonesia dari Open Food Facts dengan **BARCODE NYATA**
-     (scan kemasan asli langsung dikenali); harganya perkiraan otomatis
-     dari kategori & ukuran kemasan.
-   - Daftar lengkap bisa diperluas: `scripts/data/*.csv` (kurasi +
-     hasil unduh OFF) → `node scripts/generate-master-catalog.mjs`.
-     Pool OPEN OFF Indonesia: 8.698 produk (api publik, throttled) —
-     sisanya tetap terjangkau lewat lookup ONLINE per-scan.
+1. **Master bawaan (offline)** — `src/data/master/` — **BARCODE NYATA
+   SAJA (§5D)**: 241 produk terverifikasi dari rekam Open Food Facts
+   Indonesia (prefiks GS1 Indonesia / merek lokal; validasi digit cek GS1;
+   provenance `source` + `sourceProductId` per baris). 509 barcode
+   template sintetis lama DIHAPUS dari master dan DIPENSIUNKAN
+   (`retired-barcodes.ts`) — aplikasi otomatis menolkan barcode sintetis
+   pada katalog warung yang pernah ter-seed versi lama (produk tetap
+   ada, dijual via pencarian nama). Harga referensi hanya bila sumber
+   kurasi punya nama+ukuran identik (4 produk); sisanya null — pemilik
+   warung menentukan harga jual sendiri. Laporan mutu nyata:
+   `scripts/data/catalog-report-5d.md` (regenerasi:
+   `node scripts/build-real-catalog.mjs` setelah menambah CSV unduhan OFF
+   di `scripts/data/off-*.csv`). Katalog lama dibackup di
+   `scripts/data/backup-5d/`.
+   Validasi barcode (lib `src/lib/barcode.ts`): normalisasi (nol depan
+   dipertahankan, disimpan string), panjang GTIN 8/12/13/14, digit cek
+   mod-10, pola placeholder ditolak — diterapkan di input kasir
+   (tambah/edit produk) DAN impor CSV.
 2. **Open Food Facts (online)** — `src/services/openfoodfacts.service.ts`:
    lookup `world.openfoodfacts.org` (API publik gratis, tanpa kunci).
    Nama & kategori dipetakan ke kategori warung; **OFF tidak punya harga**,
@@ -377,7 +384,7 @@ warungku/
     │   │                   # GoogleSheetsSyncTarget (tulis idempotent)
     │   ├── local/          # LocalStore (localStorage/memori) — DATABASE UTAMA
     │   └── master/         # master-products.ts + master-offline-catalog.ts
-    │                       # (715 produk offline: kurasi + barcode nyata OFF)
+    │                       # barcode nyata OFF + retired-barcodes (§5D)
     ├── sync/               # QueueSyncEngine (antrean + onOperationSynced)
     ├── auth/               # AuthProvider + GoogleAuthProvider (klien)
     ├── lib/                # csv (impor), pricing (harga massal), reports

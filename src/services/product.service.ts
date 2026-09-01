@@ -7,6 +7,8 @@ import { PRODUCT_UNITS } from "@/domain";
 import type { LocalStore } from "@/data/local/local-store";
 import type { StoreDataRepository } from "@/data/store-data-repository";
 import { MASTER_PRODUCTS } from "@/data/master/master-products";
+import { RETIRED_BARCODES } from "@/data/master/retired-barcodes";
+import { validateBarcode } from "@/lib/barcode";
 import type { SyncEngine } from "@/sync/sync-engine";
 import { nowISO } from "@/lib/datetime";
 import { NotFoundError, ValidationError } from "@/lib/errors";
@@ -90,10 +92,18 @@ export class ProductService {
     if (!name) {
       throw new ValidationError("Nama produk wajib diisi.", { field: "name" });
     }
-    const barcode = input.barcode?.trim() ?? "";
-    if (!barcode) {
+    const barcodeInput = input.barcode?.trim() ?? "";
+    if (!barcodeInput) {
       throw new ValidationError("Barcode wajib diisi.", { field: "barcode" });
     }
+    // §5D: barcode dinormalisasi + divalidasi GS1 sebelum masuk katalog.
+    const check = validateBarcode(barcodeInput);
+    if (!check.valid) {
+      throw new ValidationError(check.reason ?? "Barcode tidak valid.", {
+        field: "barcode",
+      });
+    }
+    const barcode = check.normalized;
     const category = input.category?.trim() ?? "";
     if (!category) {
       throw new ValidationError("Kategori wajib diisi.", { field: "category" });
@@ -170,8 +180,15 @@ export class ProductService {
       next.name = name;
     }
     if (input.barcode !== undefined) {
-      const barcode = input.barcode?.trim() || "";
-      if (barcode && barcode !== current.barcode) {
+      const rawBarcode = input.barcode?.trim() || "";
+      if (rawBarcode && rawBarcode !== current.barcode) {
+        const check = validateBarcode(rawBarcode);
+        if (!check.valid) {
+          throw new ValidationError(check.reason ?? "Barcode tidak valid.", {
+            field: "barcode",
+          });
+        }
+        const barcode = check.normalized;
         const existing = await this.getProductByBarcode(barcode);
         if (existing && existing.id !== id) {
           throw new ValidationError(
@@ -260,9 +277,18 @@ export class ProductService {
         result.failedRows.push({ row: index + 1, reason: "barcode atau nama kosong" });
         return;
       }
-      const existing = byBarcode.get(barcode);
+      const barcodeCheck = validateBarcode(barcode);
+      if (!barcodeCheck.valid) {
+        result.failedRows.push({
+          row: index + 1,
+          reason: `barcode tidak valid: ${barcodeCheck.reason}`,
+        });
+        return;
+      }
+      const normalized = barcodeCheck.normalized;
+      const existing = byBarcode.get(normalized);
       if (existing) {
-        result.skippedExisting.push({ barcode, name: existing.name });
+        result.skippedExisting.push({ barcode: normalized, name: existing.name });
         return;
       }
       const currentPrice = Math.round(input.currentPrice ?? 0);
@@ -273,7 +299,7 @@ export class ProductService {
 
       const product: Product = {
         id: createPrefixedId("prd"),
-        barcode,
+        barcode: normalized,
         name,
         currentPrice,
         costPrice: null,
@@ -284,7 +310,7 @@ export class ProductService {
         createdAt: now,
         updatedAt: now,
       };
-      byBarcode.set(barcode, product);
+      byBarcode.set(normalized, product);
       result.created.push(product);
     });
 
@@ -305,7 +331,7 @@ export class ProductService {
   }
 
   /**
-   * SEED master offline (715 produk: 99 seed + 206 OFF barcode nyata + 410 kurasi)
+   * SEED master offline §5D (produk barcode-NYATA terverifikasi saja)
    * ke katalog lokal + antrean sinkronisasi. Idempotent: barcode yang sudah
    * ada di katalog DILEWATI, bukan duplikat. Aman dipanggil berulang-ulang.
    *
@@ -314,15 +340,47 @@ export class ProductService {
    *   (offline-first — antrean bertahan, tidak hilang saat refresh).
    */
   async seedFromMaster(): Promise<BulkImportResult> {
+    // §5D: master kini barcode-NYATA-saja; harga referensi bisa null →
+    // mulai dari 0 (pemilik warung menentukan harga jual sendiri).
     const inputs: CreateProductInput[] = MASTER_PRODUCTS.map((master) => ({
       barcode: master.barcode,
       name: master.name,
       category: master.category,
-      currentPrice: master.suggestedPrice,
+      currentPrice: master.suggestedPrice ?? 0,
       stock: 0, // master tidak tahu stok awal — kasir isi sendiri
       unit: master.unit,
     }));
     return this.bulkCreateProducts(inputs);
+  }
+
+  /**
+   * §5D MIGRASI: bersihkan barcode SINTETIS warisan seed 5C dari katalog
+   * warung. Produk TIDAK dihapus — hanya barcode-nya dinolkan agar scan
+   * berikutnya memakai barcode nyata (produklama tetap bisa dijual lewat
+   * pencarian nama). Idempotent; enqueue UPDATE per produk yang berubah.
+   */
+  async purgeRetiredBarcodes(): Promise<number> {
+    const products = await this.localStore.getCachedProducts();
+    const now = nowISO();
+    const changed: Product[] = [];
+    const next = products.map((product) => {
+      if (!product.barcode || !RETIRED_BARCODES.has(product.barcode)) return product;
+      const updated: Product = { ...product, barcode: null, updatedAt: now };
+      changed.push(updated);
+      return updated;
+    });
+    if (changed.length === 0) return 0;
+    await this.localStore.setCachedProducts(next);
+    for (const product of changed) {
+      await this.syncEngine.enqueue({
+        id: createPrefixedId("op"),
+        kind: "UPDATE",
+        entity: "PRODUCT",
+        payload: product,
+        createdAt: now,
+      });
+    }
+    return changed.length;
   }
 
   /**

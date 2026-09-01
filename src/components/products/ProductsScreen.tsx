@@ -153,7 +153,8 @@ export function ProductsScreen() {
   }
 
   /**
-   * Tambah 715 produk master offline ke katalog lokal (idempotent by barcode).
+   * Tambah produk master offline (barcode nyata §5D) ke katalog lokal
+   * (idempotent by barcode).
    * Aman dipanggil berkali-kali: barcode yang sudah ada dilewati, bukan
    * diduplikasi. Antrean sinkron kirim ke Google Sheets saat token hidup.
    * Pesan ringkas ditampilkan di atas daftar (menghilang sendiri).
@@ -364,8 +365,8 @@ export function ProductsScreen() {
               type="button"
               onClick={() => void handleSeedFromMaster()}
               disabled={seeding}
-              aria-label="Impor 715 produk master offline ke katalog"
-              title="Impor 715 produk master offline ke katalog (idempotent)"
+              aria-label="Impor produk master offline (barcode nyata) ke katalog"
+              title="Impor produk master offline (barcode nyata, idempotent)"
               className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-stone-300 bg-white text-stone-600 active:opacity-80 disabled:opacity-50"
             >
               <Icon name="upload" className={cn("h-5 w-5", seeding && "animate-pulse")} />

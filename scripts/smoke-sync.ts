@@ -16,6 +16,10 @@
  *    - agregat CUSTOMERS benar, baris PRODUCTS/TRANSACTIONS/ITEMS benar.
  */
 import { MemoryLocalStore } from "../src/data/local/memory-local-store";
+import { normalizeBarcode, validateBarcode } from "../src/lib/barcode";
+import { parseProductCsv } from "../src/lib/csv";
+import { MASTER_PRODUCTS, findMasterByBarcode } from "../src/data/master/master-products";
+import { RETIRED_BARCODES } from "../src/data/master/retired-barcodes";
 import { NotConnectedGoogleApiClient } from "../src/data/google/google-api-client";
 import type { GoogleApiClient, GoogleApiClientRequest } from "../src/data/google/google-api-client";
 import { GoogleSheetsStoreRepository } from "../src/data/google/google-sheets-store-repository";
@@ -40,6 +44,14 @@ function check(condition: unknown, message: string): void {
     failures += 1;
     console.error(`  ✗ ${message}`);
   }
+}
+
+/** Digit cek GS1 mod-10 dari 12 digit body (untuk fixture barcode uji). */
+function gs1Barcode(body12: string): string {
+  const digits = body12.split("").map(Number);
+  let sum = 0;
+  for (let i = 0; i < 12; i += 1) sum += i % 2 === 0 ? digits[i]! : digits[i]! * 3;
+  return `${body12}${(10 - (sum % 10)) % 10}`;
 }
 
 function appErrorOf(error: unknown): AppError {
@@ -204,14 +216,14 @@ async function main(): Promise<void> {
   });
   const gula = await products.createProduct({
     name: "Gula 1kg",
-    barcode: "8991002105678",
+    barcode: "8991002105676",
     category: "Kebutuhan",
     currentPrice: 18000,
     stock: 10,
     unit: "pack",
   });
   check((await products.searchProducts("indomie")).length === 1, "cari nama → ketemu");
-  check((await products.getProductByBarcode("8991002105678"))?.name === "Gula 1kg", "cari barcode → ketemu");
+  check((await products.getProductByBarcode("8991002105676"))?.name === "Gula 1kg", "cari barcode → ketemu");
   check((await products.searchProducts("kebutuhan")).length === 1, "cari kategori → ketemu (Kebutuhan → Gula)");
   try {
     await products.createProduct({ name: "Duplikat", barcode: "8991002101234", category: "X", currentPrice: 1, stock: 1 });
@@ -442,7 +454,7 @@ async function main(): Promise<void> {
   );
   const stokGagal = await productsGagal.createProduct({
     name: "Kopi Kapal",
-    barcode: "8991112223334",
+    barcode: "8991112223338",
     category: "Minuman",
     currentPrice: 2000,
     stock: 15,
@@ -469,7 +481,7 @@ async function main(): Promise<void> {
   for (let i = 0; i < 30; i += 1) {
     const created = await products.createProduct({
       name: `Produk Uji 5A-${i}`,
-      barcode: `89955500${String(i).padStart(5, "0")}`,
+      barcode: gs1Barcode(`89955500${String(i).padStart(4, "0")}`),
       category: "Snack",
       currentPrice: 1000 + i * 100,
       stock: 50,
@@ -638,11 +650,107 @@ async function main(): Promise<void> {
   await engineSlow.syncNow();
   check((await storeSlow.getSyncQueue()).length === 0, "5B PERFORMANCE: latar belakang menyelesaikan pengiriman setelahnya");
 
+  // ================================================== TAHAP 5D
+  console.log("7) UJI PENERIMAAN TAHAP 5D — KATALOG BARCODE NYATA");
+  // a) Normalisasi & validasi GS1 (lib barcode).
+  const normLeadingZero = normalizeBarcode(" 0896 8677-0032.6 ");
+  check(
+    normLeadingZero === "0896867700326" && normLeadingZero.startsWith("0"),
+    "5D: normalisasi buang format & PERTAHANKAN nol depan (string)",
+  );
+  check(validateBarcode("0896867700326").valid, "5D: barcode 13-digit nol-depan valid (Club)");
+  check(!validateBarcode("8991002101235").valid, "5D: digit cek salah → DITOLAK");
+  check(!validateBarcode("12345678").valid, "5D: pola placeholder 12345678 → DITOLAK");
+  check(!validateBarcode("89912345678").valid, "5D: panjang 11 tidak didukung → DITOLAK");
+
+  // b) Integritas master: SEMUA barcode nyata-format, unik, terverifikasi,
+  //    berasal dari sumber (provenance), harga bukan karangan.
+  const masterBarcodes = new Set(MASTER_PRODUCTS.map((m) => m.barcode));
+  check(
+    masterBarcodes.size === MASTER_PRODUCTS.length,
+    `5D: ${MASTER_PRODUCTS.length} barcode master unik (tanpa duplikat)`,
+  );
+  check(
+    MASTER_PRODUCTS.every((m) => validateBarcode(m.barcode).valid && m.barcodeVerified),
+    "5D: semua barcode master lolos validasi GS1 & bertanda verified",
+  );
+  check(
+    MASTER_PRODUCTS.every((m) => m.source === "Open Food Facts" && m.sourceProductId === m.barcode),
+    "5D: provenance (source + sourceProductId) lengkap di seluruh master",
+  );
+  check(
+    MASTER_PRODUCTS.every((m) => m.suggestedPrice === null || m.suggestedPrice > 0),
+    "5D: harga referensi hanya bila sumber punya (sisanya null, bukan karangan)",
+  );
+  check(
+    MASTER_PRODUCTS.every((m) => !RETIRED_BARCODES.has(m.barcode)),
+    "5D: TIDAK ada barcode sintetis pension di master baru",
+  );
+
+  // c) UJI 10 PRODUK FISIK (barcode nyata hasil pindaian pengguna OFF):
+  //    barcode fisik = database → lookup → DITEMUKAN (alur scan lengkap).
+  const realProducts: Array<[string, string]> = [
+    ["0089686010947", "Indomie Mi Goreng"],
+    ["8886008101053", "Aqua Botol 600"],
+    ["8996001600146", "Teh Pucuk Harum"],
+    ["8996001600269", "Mountain Mineral Water"],
+    ["8998009010613", "Ultra Milk Full Cream"],
+    ["8997035563414", "POCARI SWEAT"],
+    ["8998866200301", "Mi Sedaap"],
+    ["8996001301142", "Roma Biskuit Kelapa"],
+    ["8992761136161", "Coca-Cola"],
+    ["0896867700326", "Club Air Mineral"],
+  ];
+  let realOk = 0;
+  for (const [code, expectName] of realProducts) {
+    const hit = findMasterByBarcode(code);
+    if (hit && validateBarcode(hit.barcode).valid && hit.name.includes(expectName)) realOk += 1;
+  }
+  check(realOk === realProducts.length, `5D: ${realOk}/${realProducts.length} produk fisik → scan→lookup→DITEMUKAN`);
+
+  // d) Katalog warung: barcode tidak valid DITOLAK di input kasir & impor CSV.
+  try {
+    await products.createProduct({
+      name: "Barcode Bohong",
+      barcode: "8991002101235",
+      category: "Snack",
+      currentPrice: 1000,
+      stock: 1,
+      unit: "pcs",
+    });
+    check(false, "5D: barcode digit-cek-salah harus ditolak createProduct");
+  } catch (error) {
+    check(/digit cek/i.test(appErrorOf(error).message), "5D: createProduct menolak barcode digit cek salah");
+  }
+  const csvParsed = parseProductCsv(
+    "barcode,nama,kategori,harga,stok\n0089686010947,Indomie Goreng 85g,Makanan Instan,3500,24\n8991002101235,Barang Palsu,Snack,1000,1\n",
+  );
+  check(csvParsed.rows.length === 1 && csvParsed.errors.length === 1, "5D: impor CSV menerima barcode nyata & menolak yang tidak valid");
+
+  // e) MIGRASI: produk warung ber-barcode sintetis pension → barcode
+  //    dinolkan (produk TETAP ada, bisa dijual via pencarian nama).
+  const retiredSample = [...RETIRED_BARCODES][0]!;
+  const legacyProduct = await products.createProduct({
+    name: "Warisan Seed 5C",
+    barcode: retiredSample,
+    category: "Snack",
+    currentPrice: 2000,
+    stock: 5,
+    unit: "pcs",
+  });
+  const purgedCount = await products.purgeRetiredBarcodes();
+  check(purgedCount >= 1, "5D migrasi: barcode sintetis pension dibersihkan");
+  check(
+    (await products.getProductByBarcode(retiredSample)) === null &&
+      (await products.getProductById(legacyProduct.id)) !== null,
+    "5D migrasi: produk TETAP ada, barcode-nya dinolkan (scan tak salah arah)",
+  );
+
   if (failures > 0) {
     console.error(`\nGAGAL: ${failures} pemeriksaan tidak lolos.`);
     process.exit(1);
   }
-  console.log("\nSemua pemeriksaan lolos — alur transaksi Tahap 3 + 5A + 5B berfungsi (lokal + Google Sheets).");
+  console.log("\nSemua pemeriksaan lolos — alur transaksi Tahap 3 + 5A + 5B + 5D berfungsi (lokal + Google Sheets).");
 }
 
 main().catch((error: unknown) => {

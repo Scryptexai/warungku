@@ -1,3 +1,5 @@
+import { validateBarcode } from "./barcode";
+
 /**
  * Parser CSV produk — untuk impor master milik pengguna
  * (mis. dataset Kaggle "Indongan Product Dataset" format CSV).
@@ -130,13 +132,20 @@ export function parseProductCsv(text: string): CsvParseResult {
     if (result.rows.length >= MAX_IMPORT_ROWS) return;
     const cells = splitLine(line, delimiter);
 
-    const barcode = (cells[indexOf("barcode", 0)] ?? "").replace(/[^0-9A-Za-z\-]/g, "");
+    let barcode = (cells[indexOf("barcode", 0)] ?? "").replace(/[\s\-./]/g, "");
     const name = cells[indexOf("name", 1)] ?? "";
     if (!barcode && !name) return; // baris kosong — lewati diam-diam
     if (!barcode) {
       result.errors.push({ line: lineNumber, reason: "barcode kosong" });
       return;
     }
+    // §5D: normalisasi + validasi GS1 — barcode karangan/tidak valid ditolak.
+    const check = validateBarcode(barcode);
+    if (!check.valid) {
+      result.errors.push({ line: lineNumber, reason: `barcode tidak valid (${check.reason})` });
+      return;
+    }
+    barcode = check.normalized;
     if (!name) {
       result.errors.push({ line: lineNumber, reason: "nama produk kosong" });
       return;

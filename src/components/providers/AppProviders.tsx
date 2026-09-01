@@ -35,11 +35,17 @@ export function AppProviders({ children }: { children: ReactNode }) {
     void container.syncEngine.init();
   }, [container]);
 
-  // Seed katalog kosong dengan 715 produk master offline (idempotent).
+  // Seed katalog kosong dengan master offline barcode-NYATA (idempotent).
   // Pemisahan agar provider layanan cukup murni: provider ini satu-satunya
   // yang memutuskan "kapan" melakukan bootstrap.
   useEffect(() => {
-    void container.products.seedFromMasterIfEmpty();
+    // §5D: (1) bersihkan barcode sintetis warisan seed 5C (produk tetap,
+    //     barcode dinolkan), lalu (2) seed katalog kosong dengan master
+    //     barcode-NYATA. Keduanya idempotent.
+    void (async () => {
+      await container.products.purgeRetiredBarcodes();
+      await container.products.seedFromMasterIfEmpty();
+    })();
   }, [container]);
 
   useEffect(() => {
