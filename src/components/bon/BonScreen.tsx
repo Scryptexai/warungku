@@ -140,7 +140,14 @@ export function BonScreen() {
       </div>
 
       {debtors.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-stone-200 bg-white p-8 text-center">
+        <div className="rounded-2xl border border-dashed border-stone-200 bg-white p-6 text-center">
+          {/* eslint-disable-next-line @next/next/no-img-element -- aset statis lokal */}
+          <img
+            src="/images/empty-bon.jpg"
+            alt=""
+            aria-hidden
+            className="mx-auto mb-3 h-28 w-full max-w-[280px] rounded-xl object-cover"
+          />
           <p className="text-sm font-bold text-stone-900">Tidak ada bon aktif</p>
           <p className="mt-1 text-xs text-stone-500">
             Catat transaksi baru dengan mode BON untuk membuat piutang.

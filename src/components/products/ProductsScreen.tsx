@@ -536,6 +536,7 @@ export function ProductsScreen() {
           ) : (
             <EmptyState
               iconName="box"
+              imageUrl="/images/empty-produk.jpg"
               title="Belum ada produk"
               description="Tambahkan produk pertama warung Anda — cukup isi nama, barcode, kategori, harga, dan stok."
             >

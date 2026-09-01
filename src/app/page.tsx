@@ -3,6 +3,7 @@ import { QuickAccess } from "@/components/home/QuickAccess";
 import { RecentActivity } from "@/components/home/RecentActivity";
 import { SyncStatusCard } from "@/components/home/SyncStatusCard";
 import { ScanHero } from "@/components/home/ScanHero";
+import { HomeBanner } from "@/components/home/HomeBanner";
 import { TodaySummaryCard } from "@/components/home/TodaySummaryCard";
 import { CURRENT_PHASE, CURRENT_PHASE_LABEL, TOTAL_ROADMAP_PHASES } from "@/config/app";
 
@@ -18,6 +19,9 @@ export default function HomePage() {
       <HomeHeader />
       <div className="-mt-8 px-4">
         <TodaySummaryCard />
+      </div>
+      <div className="mt-4 px-4">
+        <HomeBanner />
       </div>
       <div className="mt-4 px-4">
         <ScanHero />

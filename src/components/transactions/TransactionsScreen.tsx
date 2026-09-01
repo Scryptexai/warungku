@@ -412,6 +412,7 @@ export function TransactionsScreen() {
           ) : (
             <EmptyState
               iconName="receipt"
+              imageUrl="/images/empty-transaksi.jpg"
               title="Belum ada transaksi"
               description="Transaksi tercatat otomatis setiap kali Anda berjualan dengan scan barcode — bahkan tanpa internet."
             >

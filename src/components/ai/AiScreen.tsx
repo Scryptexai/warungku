@@ -185,9 +185,12 @@ export function AiScreen() {
             )}
           >
             {message.role === "assistant" ? (
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-600 text-white">
-                <Icon name="sparkles" className="h-5 w-5" />
-              </span>
+              // eslint-disable-next-line @next/next/no-img-element -- aset statis lokal
+              <img
+                src="/images/ai-assistant.jpg"
+                alt="Asisten AI Warungku"
+                className="h-9 w-9 shrink-0 rounded-full object-cover ring-2 ring-brand-100"
+              />
             ) : null}
             <div
               className={cn(
@@ -210,9 +213,12 @@ export function AiScreen() {
         ))}
         {thinking ? (
           <div className="flex items-start gap-2">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-600 text-white">
-              <Icon name="sparkles" className="h-5 w-5" />
-            </span>
+            {/* eslint-disable-next-line @next/next/no-img-element -- aset statis lokal */}
+            <img
+              src="/images/ai-assistant.jpg"
+              alt="Asisten AI Warungku"
+              className="h-9 w-9 shrink-0 animate-pulse rounded-full object-cover ring-2 ring-brand-100"
+            />
             <div className="rounded-2xl rounded-tl-sm bg-white px-4 py-3 ring-1 ring-stone-900/5">
               <span className="flex gap-1" aria-label="Sedang berpikir">
                 {[0, 1, 2].map((dot) => (

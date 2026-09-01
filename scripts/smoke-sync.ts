@@ -1195,6 +1195,19 @@ async function main(): Promise<void> {
     "8.T3 BON: 3 pelanggan, total Rp1.250.000, terbesar Budi Rp850.000",
   );
 
+  // BON per pelanggan: "Bon Budi berapa?" → data bon Budi spesifik.
+  const a3b = await assistant8.ask("Bon Budi berapa?", now8);
+  check(
+    a3b.text.includes("Bon Budi") && a3b.text.includes(formatIDR(850000)) &&
+      a3b.text.includes("2 transaksi bon"),
+    "8.BON SPESIFIK: \"Bon Budi berapa?\" → sisa Rp850.000 dari 2 transaksi bon",
+  );
+  const a3c = await assistant8.ask("Bon Zaki berapa?", now8);
+  check(
+    /tidak menemukan pelanggan/i.test(a3c.text),
+    "8.BON SPESIFIK: pelanggan tak dikenal → dijawab jujur tidak ditemukan",
+  );
+
   // TEST 4 — persentase perbandingan minggu = hitungan deterministik (+16%).
   const a4 = await assistant8.ask("Omzet minggu ini naik atau turun dibanding minggu lalu?", now8);
   check(

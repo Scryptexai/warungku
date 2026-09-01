@@ -81,6 +81,27 @@ BUKA APLIKASI → TRANSAKSI BARU (ketik nama ATAU scan — satu layar, §5A)
   ada, HTTP tidak aman) didiagnosis spesifik + tombol **Buka di Tab Baru**.
   Kode manual selalu tersedia sebagai jalur cadangan.
 
+### Audit menyeluruh + polesan UI (pasca-§8)
+
+Gap yang ditemukan audit & sudah ditutup:
+
+- **Shell PWA offline penuh** — service worker kini meng-precache SEMUA rute
+  utama (/, /scan, /produk, /transaksi, /bon, /laporan, /ai, /profil) +
+  gambar; sebelumnya hanya "/" sehingga halaman lain gagal dibuka offline
+  sebelum pernah dikunjungi.
+- **Batas error aplikasi** (`error.tsx`, `not-found.tsx`) — bila komponen
+  gagal, pemilik melihat pesan Indonesia yang menenangkan (tanpa stack
+  trace), data tetap aman, ada tombol Coba Lagi.
+- **Asisten: bon per pelanggan** — "Bon Budi berapa?" kini menjawab sisa
+  piutang + jumlah transaksi bon + transaksi terakhir Budi spesifik
+  (sebelumnya selalu ringkasan umum); nama tak dikenal → dijawab jujur.
+
+Polesan UI/UX (tanpa redesign — bahasa visual yang sama):
+
+- **Sapaan harian** di Beranda: foto ilustrasi warung + salam sesuai jam WIB.
+- **Ilustrasi keadaan kosong** di Transaksi / Produk / Bon (sebelumnya hanya ikon).
+- **Avatar asisten** di AI Toko: ibu warung ramah (mengganti ikon bintang).
+
 ### Asisten AI Toko (§8)
 
 AI sebagai **lapisan penalaran terkendali** di atas data toko — bukan chatbot

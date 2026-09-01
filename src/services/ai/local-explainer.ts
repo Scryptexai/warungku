@@ -8,6 +8,7 @@
  */
 
 import { formatIDR, formatNumberID } from "@/lib/money";
+import { formatDateID } from "@/lib/datetime";
 import type { AiAnswer, AiExplainInput, AiProvider } from "./ai-provider";
 
 const n = formatNumberID;
@@ -34,6 +35,13 @@ function sentence(facts: Record<string, unknown>): string {
     totalUnpaid?: number;
     largest?: { name: string; unpaidTotal: number } | null;
     allActive?: Array<{ name: string; unpaidTotal: number }>;
+    query?: string;
+    matches?: Array<{
+      name: string;
+      unpaidTotal: number;
+      bonTransactionCount: number;
+      latest?: { date: string; total: number; status: string } | null;
+    }>;
     productNotFound?: string;
     product?: string;
     stock?: number;
@@ -120,6 +128,18 @@ function sentence(facts: Record<string, unknown>): string {
       );
     }
     return parts.join(" ");
+  }
+
+  if (f.query !== undefined && Array.isArray(f.matches)) {
+    if (f.matches.length === 0) {
+      return `Saya tidak menemukan pelanggan "${f.query}" yang punya bon aktif. Daftar bon aktif ada di menu Bayar Bon.`;
+    }
+    const first = f.matches[0]!;
+    const latest = first.latest;
+    const latestText = latest
+      ? ` Terakhir ${formatDateID(`${latest.date}T12:00:00+07:00`)} sebesar ${formatIDR(latest.total)} (${latest.status === "UNPAID" ? "belum lunas" : "lunas"}).`
+      : "";
+    return `Bon ${first.name}: sisa ${formatIDR(first.unpaidTotal)} dari ${n(first.bonTransactionCount)} transaksi bon.${latestText}`;
   }
 
   if (f.activeBonCustomerCount !== undefined) {

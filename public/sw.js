@@ -13,15 +13,30 @@
  * bisa dibuka tanpa internet.
  */
 
-const VERSION = "warungku-v1";
+const VERSION = "warungku-v2";
 const STATIC_CACHE = `${VERSION}-static`;
 const PAGES_CACHE = `${VERSION}-pages`;
 
+// Seluruh SHELL di-precache saat instalasi — warung bisa langsung buka
+// kasir/laporan/AI secara OFFLINE SEBELUM pernah membuka halaman itu
+// (syarat §6: aplikasi terasa "selalu online" meski jaringan mati).
 const PRECACHE_URLS = [
   "/",
+  "/scan",
+  "/produk",
+  "/transaksi",
+  "/bon",
+  "/laporan",
+  "/ai",
+  "/profil",
   "/manifest.webmanifest",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
+  "/images/hero-warung.jpg",
+  "/images/ai-assistant.jpg",
+  "/images/empty-transaksi.jpg",
+  "/images/empty-produk.jpg",
+  "/images/empty-bon.jpg",
 ];
 
 self.addEventListener("install", (event) => {
@@ -55,6 +70,10 @@ function isStaticAsset(url) {
     url.pathname.startsWith("/icons/") ||
     url.pathname.endsWith(".webmanifest") ||
     url.pathname.endsWith(".png") ||
+    url.pathname.endsWith(".jpg") ||
+    url.pathname.endsWith(".jpeg") ||
+    url.pathname.endsWith(".webp") ||
+    url.pathname.endsWith(".svg") ||
     url.pathname.endsWith(".woff2")
   );
 }

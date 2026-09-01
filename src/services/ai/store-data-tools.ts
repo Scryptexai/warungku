@@ -421,8 +421,14 @@ export function runToolForIntent(
       return getProductSales(data, intent.range, now, "slow");
     case "STOCK":
       return getStockStatus(data, now, question);
-    case "BON":
-      return getBonSummary(data);
+    case "BON": {
+      // Sebut nama pelanggan? → bon pelanggan itu ("Bon Budi berapa?");
+      // nama tak dikenal → dijawab jujur tidak ditemukan.
+      const specific = matchCustomerInQuestion(question, data.customers);
+      if (specific === undefined) return getBonSummary(data);
+      if (!specific.found) return getCustomerBon(data, specific.candidate);
+      return getCustomerBon(data, specific.found.name);
+    }
     case "COMPARE":
       return compareSalesPeriods(data, intent.range, now);
     case "PROFIT":
@@ -447,6 +453,39 @@ const QUESTION_FILLER_WORDS = new Set([
  * - { found: null, candidate } → ada frasa kandidat tapi tak ada di katalog
  *   (dijawab jujur "tidak ditemukan" — bukan dikarang).
  */
+const BON_QUESTION_FILLER = new Set([
+  "bon", "piutang", "utang", "berapa", "siapa", "masih", "punya", "saya",
+  "ada", "yang", "dari", "dengan", "total", "terbesar", "belum", "bayar",
+  "lunas", "dibayar", "sisa", "sekalian", "di", "ini", "apa", "tolong",
+  "cek", "kapan", "dan", "atau", "semua", "daftar", "list", "paling",
+]);
+
+/**
+ * Cari pelanggan yang DISEBUT pertanyaan bon ("Bon Budi berapa?").
+ * - { found: Customer } → nama cocok pelanggan berpiutang,
+ * - { found: null, candidate } → ada kata nama tapi bukan pelanggan,
+ * - undefined → pertanyaan bon umum (tanpa nama).
+ */
+export function matchCustomerInQuestion(
+  question: string,
+  customers: Customer[],
+): { found: Customer } | { found: null; candidate: string } | undefined {
+  const q = question.toLowerCase();
+  const byName = customers.find(
+    (customer) =>
+      customer.outstandingBalance > 0 && q.includes(customer.name.toLowerCase()),
+  );
+  if (byName) return { found: byName };
+  const candidate = q
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter((word) => word.length > 2 && !BON_QUESTION_FILLER.has(word))
+    .join(" ")
+    .trim();
+  if (candidate.length > 2) return { found: null, candidate };
+  return undefined;
+}
+
 export function matchProductInQuestion(
   question: string,
   products: Product[],
