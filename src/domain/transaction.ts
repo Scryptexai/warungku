@@ -12,6 +12,14 @@ export type PaymentType = (typeof PAYMENT_TYPES)[number];
 export const TRANSACTION_STATUSES = ["COMPLETED", "VOIDED"] as const;
 export type TransactionStatus = (typeof TRANSACTION_STATUSES)[number];
 
+/**
+ * Status PEMBAYARAN (§6) — beda dari status transaksi (lifecycle).
+ * CASH lahir LUNAS; BON lahir BELUM LUNAS sampai ada pencatatan pelunasan
+ * (modul pelunasan menyusul di fase berikutnya).
+ */
+export const PAYMENT_STATUSES = ["PAID", "UNPAID"] as const;
+export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+
 /** Referensi pelanggan pada transaksi (snapshot nama agar riwayat tetap benar). */
 export interface TransactionCustomerRef {
   /** Null bila pembeli bon dicatat cepat tanpa profil pelanggan. */
@@ -45,6 +53,8 @@ export interface Transaction {
   /** Total nilai transaksi = jumlah seluruh subtotal item. */
   total: number;
   status: TransactionStatus;
+  /** §6: status pembayaran — CASH→PAID, BON→UNPAID saat transaksi dibuat. */
+  paymentStatus: PaymentStatus;
   items: TransactionItem[];
   note: string | null;
   /** Diisi engine sinkronisasi setelah transaksi diterima Google Sheets. */

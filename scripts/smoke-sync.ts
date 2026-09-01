@@ -20,6 +20,7 @@ import { normalizeBarcode, validateBarcode } from "../src/lib/barcode";
 import { parseProductCsv } from "../src/lib/csv";
 import { MASTER_PRODUCTS, findMasterByBarcode } from "../src/data/master/master-products";
 import { RETIRED_BARCODES } from "../src/data/master/retired-barcodes";
+import { addToCart, cartTotal, type CartItem } from "../src/lib/cart";
 import { NotConnectedGoogleApiClient } from "../src/data/google/google-api-client";
 import type { GoogleApiClient, GoogleApiClientRequest } from "../src/data/google/google-api-client";
 import { GoogleSheetsStoreRepository } from "../src/data/google/google-sheets-store-repository";
@@ -746,11 +747,136 @@ async function main(): Promise<void> {
     "5D migrasi: produk TETAP ada, barcode-nya dinolkan (scan tak salah arah)",
   );
 
+  // ================================================== TAHAP 6
+  console.log("8) UJI PENERIMAAN TAHAP 6 — MESIN TRANSAKSI OFFLINE");
+  // Perangkat uji §6: lokal murni, TANPA internet sama sekali.
+  const store6 = new MemoryLocalStore();
+  const repo6 = new GoogleSheetsStoreRepository(new NotConnectedGoogleApiClient());
+  const engine6 = new QueueSyncEngine({ target: new NotConnectedSyncTarget(), localStore: store6, listenToNetworkEvents: false });
+  await engine6.init();
+  const products6 = new ProductService({ repository: repo6, localStore: store6, syncEngine: engine6 });
+  const customers6 = new CustomerService({ repository: repo6, localStore: store6, syncEngine: engine6 });
+  const transactions6 = new TransactionService({ localStore: store6, syncEngine: engine6, repository: repo6 });
+  const sales6 = new SaleService(products6, transactions6, customers6, engine6);
+
+  const pAqua = await products6.createProduct({ name: "Aqua 600ml", barcode: "8886008101053", category: "Minuman", currentPrice: 3000, stock: 100, unit: "pcs" });
+  const pMie = await products6.createProduct({ name: "Indomie Goreng", barcode: "0089686010947", category: "Makanan Instan", currentPrice: 3500, stock: 100, unit: "pcs" });
+
+  // TEST 1 — pencarian offline instan (lokal, tanpa jaringan).
+  const found1 = await products6.searchProducts("aqua");
+  check(found1.length === 1 && found1[0]!.name === "Aqua 600ml", "6.T1 CARI: produk langsung ketemu offline");
+
+  // TEST 2 — lookup barcode offline.
+  const found2 = await products6.getProductByBarcode("0089686010947");
+  check(found2?.name === "Indomie Goreng", "6.T2 BARCODE: produk terdaftar dikenali offline");
+
+  // TEST 3 — scan/barang sama 5× → SATU baris, jumlah 5 (logika lib/cart).
+  let cart6: CartItem[] = [];
+  for (let i = 0; i < 5; i += 1) cart6 = addToCart(cart6, pAqua, 1);
+  check(cart6.length === 1 && cart6[0]!.quantity === 5, "6.T3 ULANG×5: satu baris, jumlah 5");
+
+  // TEST 4 — 10 produk beda + TEST 5 — subtotal & total lokal.
+  for (let i = 0; i < 10; i += 1) {
+    cart6 = addToCart(cart6, await products6.createProduct({
+      name: `Produk 6-${i}`, barcode: gs1Barcode(`89977700${String(i).padStart(4, "0")}`),
+      category: "Snack", currentPrice: 2000 + i * 100, stock: 50, unit: "pcs",
+    }), 1);
+  }
+  check(cart6.length === 11, "6.T4 10 PRODUK: semua terwakili di keranjang");
+  const totalHarapan6 = 5 * 3000 + Array.from({ length: 10 }, (_, i) => 2000 + i * 100).reduce((a, b) => a + b, 0);
+  check(cartTotal(cart6) === totalHarapan6, `6.T5 TOTAL: subtotal+total benar (${totalHarapan6})`);
+
+  // Keranjang PERSISTEN (§6 interupsi/restart): simpan → muat ulang.
+  await store6.setActiveCart(cart6);
+  const restoredCart = await store6.getActiveCart();
+  check(restoredCart.length === cart6.length && cartTotal(restoredCart) === totalHarapan6, "6.INTERRUPT: keranjang dipulihkan utuh dari perangkat (tahan restart)");
+
+  // TEST 6 — CASH offline + status pembayaran PAID.
+  const cash6 = await sales6.recordSale({ items: [{ productId: pAqua.id, quantity: 3 }], paymentType: "CASH" });
+  check(cash6.transaction.paymentType === "CASH" && cash6.transaction.paymentStatus === "PAID", "6.T6 CASH: tersimpan offline, status LUNAS");
+
+  // TEST 7 — BON offline: nama + items + total + status UNPAID.
+  const bon6 = await sales6.recordSale({
+    items: [{ productId: pMie.id, quantity: 2 }, { productId: pAqua.id, quantity: 1 }],
+    paymentType: "BON", customerName: "Budi",
+  });
+  check(
+    bon6.transaction.paymentStatus === "UNPAID" &&
+      bon6.transaction.customer?.name === "Budi" &&
+      bon6.transaction.items.length === 2 &&
+      bon6.transaction.total === 2 * 3500 + 3000,
+    "6.T7 BON: nama+produk+total tersimpan, status BELUM LUNAS",
+  );
+
+  // TEST 8 — stok berkurang PERSIS sesuai qty
+  // (Aqua: 100 − 3 CASH − 1 BON = 96; Indomie: 100 − 2 BON = 98).
+  check(
+    (await products6.getProductById(pAqua.id))?.stock === 96 &&
+      (await products6.getProductById(pMie.id))?.stock === 98,
+    "6.T8 STOK: berkurang tepat (Aqua 100→96, Indomie 100→98)",
+  );
+
+  // TEST 9 — restart: layanan & engine BARU di atas store yang sama.
+  const engine6b = new QueueSyncEngine({ target: new NotConnectedSyncTarget(), localStore: store6, listenToNetworkEvents: false });
+  await engine6b.init();
+  const transactions6b = new TransactionService({ localStore: store6, syncEngine: engine6b, repository: repo6 });
+  const products6b = new ProductService({ repository: repo6, localStore: store6, syncEngine: engine6b });
+  const after6b = await transactions6b.listTransactions();
+  check(
+    after6b.length === 2 && (await products6b.getProductById(pAqua.id))?.stock === 96,
+    "6.T9 RESTART: transaksi & stok tetap ada setelah aplikasi dibuka ulang",
+  );
+
+  // TEST 10 — harga berubah → transaksi LAMA tetap pakai harga saat transaksi.
+  await products6.updateProduct(pAqua.id, { currentPrice: 3500 });
+  const hist10 = (await transactions6b.listTransactions()).find((t) => t.id === cash6.transaction.id)!;
+  check(
+    hist10.items[0]!.unitPrice === 3000 && hist10.total === 9000,
+    "6.T10 HARGA: snapshot transaksi lama TIDAK ikut berubah (3000, bukan 3500)",
+  );
+
+  // TEST 11 — mulai online → putus di tengah → selesaikan (engine offline,
+  // keranjang dipulihkan dari perangkat) → transaksi sah. Catatan: harga
+  // Aqua sudah diubah T10 — transaksi ini memakai harga BARU (memang
+  // begitu perilakunya); keranjang snack tak terpengaruh.
+  const cart11 = restoredCart.filter((item) => item.productId !== pAqua.id);
+  const total11 = cartTotal(cart11);
+  const sale11 = await sales6.recordSale({
+    items: cart11.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+    paymentType: "CASH",
+  });
+  check(sale11.transaction.items.length === 10 && sale11.transaction.total === total11, "6.T11 PUTUS: transaksi selesai & benar setelah kehilangan jaringan");
+
+  // TEST 12 — 20 transaksi beruntun offline: ID unik, jumlah utuh, stok & total akurat.
+  const before12 = (await transactions6.listTransactions()).length;
+  const ids12 = new Set<string>();
+  let sum12 = 0;
+  for (let i = 0; i < 20; i += 1) {
+    const rapid = await sales6.recordSale({ items: [{ productId: pMie.id, quantity: 1 }], paymentType: "CASH" });
+    ids12.add(rapid.transaction.id);
+    sum12 += rapid.transaction.total;
+  }
+  const after12 = await transactions6.listTransactions();
+  check(
+    ids12.size === 20 && after12.length === before12 + 20 && sum12 === 20 * 3500,
+    "6.T12 RAPID×20: ID unik semua, tanpa transaksi hilang, total akurat",
+  );
+  check((await products6.getProductById(pMie.id))?.stock === 100 - 2 - 20, "6.T12 RAPID×20: stok akurat tanpa korupsi (100−2−20)");
+
+  // Rollback §6: stok kurang di tengah commit → transaksi TIDAK tersisa.
+  try {
+    await sales6.recordSale({ items: [{ productId: pAqua.id, quantity: 99999 }], paymentType: "CASH" });
+    check(false, "6.ROLLBACK: stok kurang harus ditolak");
+  } catch {
+    const all6 = await transactions6.listTransactions();
+    check(all6.length === after12.length, "6.ROLLBACK: transaksi gagal tidak tersisa (konsisten dgn stok)");
+  }
+
   if (failures > 0) {
     console.error(`\nGAGAL: ${failures} pemeriksaan tidak lolos.`);
     process.exit(1);
   }
-  console.log("\nSemua pemeriksaan lolos — alur transaksi Tahap 3 + 5A + 5B + 5D berfungsi (lokal + Google Sheets).");
+  console.log("\nSemua pemeriksaan lolos — alur transaksi Tahap 3 + 5A + 5B + 5D + 6 berfungsi (lokal + Google Sheets).");
 }
 
 main().catch((error: unknown) => {

@@ -11,6 +11,7 @@ import {
   LOCAL_STORAGE_SCHEMA_VERSION,
 } from "@/config/app";
 import { AppError } from "@/lib/errors";
+import type { CartItemSnapshot } from "@/lib/cart";
 import type { LocalStore, LocalStoreKey } from "./local-store";
 import { LOCAL_STORE_KEYS } from "./local-store";
 
@@ -140,6 +141,14 @@ export class BrowserLocalStore implements LocalStore {
     this.write("transactions", transactions);
   }
 
+  async removeTransaction(transactionId: string): Promise<void> {
+    const transactions = await this.getAllTransactions();
+    this.write(
+      "transactions",
+      transactions.filter((item) => item.id !== transactionId),
+    );
+  }
+
   async markTransactionSynced(transactionId: string, syncedAt: string): Promise<void> {
     const transactions = await this.getAllTransactions();
     const next = transactions.map((item) =>
@@ -185,6 +194,16 @@ export class BrowserLocalStore implements LocalStore {
       "syncQueue",
       queue.filter((queued) => queued.id !== itemId),
     );
+  }
+
+  // ---------------------------------------------------- Keranjang aktif (§6)
+
+  async getActiveCart(): Promise<CartItemSnapshot[]> {
+    return this.read<CartItemSnapshot[]>("activeCart", []);
+  }
+
+  async setActiveCart(items: CartItemSnapshot[]): Promise<void> {
+    this.write("activeCart", items);
   }
 
   // ------------------------------------------------------ Status sinkronisasi

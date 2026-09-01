@@ -395,6 +395,53 @@ export class ProductService {
   }
 
   /**
+   * §6 ATOMIK: kurangi stok BANYAK produk dalam SATU tulisan koleksi
+   * (bukan per produk) + antre operasi sinkron setelahnya. Dipakai
+   * SaleService agar PENULISAN TRANSAKSI + STOK commit bersama; bila
+   * tulisan transaksi gagal, SaleService me-rollback tulisan ini.
+   * Validasi kecukupan stok dilakukan ulang di sini (cegah stok minus).
+   */
+  async reduceStockOnce(
+    items: Array<{ productId: string; quantity: number }>,
+  ): Promise<Array<{ product: Product; newStock: number }>> {
+    const products = await this.localStore.getCachedProducts();
+    const delta = new Map<string, number>();
+    for (const item of items) {
+      delta.set(item.productId, (delta.get(item.productId) ?? 0) + item.quantity);
+    }
+    const updates: Array<{ product: Product; newStock: number }> = [];
+    const now = nowISO();
+    const next = products.map((product) => {
+      const sold = delta.get(product.id);
+      if (sold === undefined) return product;
+      if (sold > product.stock) {
+        throw new ValidationError(
+          `Stok ${product.name} tidak cukup. Sisa ${product.stock} ${product.unit}.`,
+          { field: "items" },
+        );
+      }
+      const updated: Product = {
+        ...product,
+        stock: Math.max(0, Math.round(product.stock - sold)),
+        updatedAt: now,
+      };
+      updates.push({ product: updated, newStock: updated.stock });
+      return updated;
+    });
+    await this.localStore.setCachedProducts(next); // SATU tulisan untuk semua
+    for (const { product } of updates) {
+      await this.syncEngine.enqueue({
+        id: createPrefixedId("op"),
+        kind: "UPDATE",
+        entity: "PRODUCT",
+        payload: product,
+        createdAt: now,
+      });
+    }
+    return updates;
+  }
+
+  /**
    * ATUR STOK = nilai yang sama untuk SEMUA produk. Idempotent: dipanggil
    * berulang-ulang, nilai stok akan sama. Stok awal = 0 (master tidak
    * tahu stok nyata) — founder mengisi via tombol dev di /produk. Tulis

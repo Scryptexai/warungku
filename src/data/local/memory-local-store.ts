@@ -6,6 +6,7 @@ import type {
   SyncStatusSnapshot,
   Transaction,
 } from "@/domain";
+import type { CartItemSnapshot } from "@/lib/cart";
 import type { LocalStore } from "./local-store";
 
 /**
@@ -18,6 +19,7 @@ export class MemoryLocalStore implements LocalStore {
   private products: Product[] = [];
   private customers: Customer[] = [];
   private transactions: Transaction[] = [];
+  private activeCart: CartItemSnapshot[] = [];
   private syncQueue: SyncQueueItem[] = [];
   private syncStatus: SyncStatusSnapshot | null = null;
 
@@ -86,6 +88,10 @@ export class MemoryLocalStore implements LocalStore {
     this.transactions = [...transactions];
   }
 
+  async removeTransaction(transactionId: string): Promise<void> {
+    this.transactions = this.transactions.filter((item) => item.id !== transactionId);
+  }
+
   async markTransactionSynced(transactionId: string, syncedAt: string): Promise<void> {
     this.transactions = this.transactions.map((item) =>
       item.id === transactionId ? { ...item, syncedAt: item.syncedAt ?? syncedAt } : item,
@@ -94,6 +100,14 @@ export class MemoryLocalStore implements LocalStore {
 
   async getPendingTransactions(): Promise<Transaction[]> {
     return this.transactions.filter((item) => item.syncedAt === null);
+  }
+
+  async getActiveCart(): Promise<CartItemSnapshot[]> {
+    return [...this.activeCart];
+  }
+
+  async setActiveCart(items: CartItemSnapshot[]): Promise<void> {
+    this.activeCart = [...items];
   }
 
   async getSyncQueue(): Promise<SyncQueueItem[]> {
@@ -132,6 +146,7 @@ export class MemoryLocalStore implements LocalStore {
     this.products = [];
     this.customers = [];
     this.transactions = [];
+    this.activeCart = [];
     this.syncQueue = [];
     this.syncStatus = null;
   }

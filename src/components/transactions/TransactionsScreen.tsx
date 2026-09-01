@@ -106,6 +106,11 @@ function TransactionRow({
         <span className="block text-sm font-bold text-stone-900">
           {formatIDR(transaction.total)}
         </span>
+        {isBon && transaction.paymentStatus === "UNPAID" ? (
+          <span className="mb-0.5 inline-block rounded-full bg-amber-100 px-1.5 text-[10px] font-bold text-amber-700">
+            Belum Lunas
+          </span>
+        ) : null}
         <SyncBadge syncedAt={transaction.syncedAt} queueItem={queueItem} />
       </span>
     </button>
@@ -160,6 +165,18 @@ function TransactionDetailSheet({
               </dd>
             </div>
           ) : null}
+          <div className="flex justify-between">
+            <dt>Status bon</dt>
+            <dd
+              className={
+                transaction.paymentStatus === "UNPAID"
+                  ? "font-semibold text-amber-600"
+                  : "font-semibold text-stone-800"
+              }
+            >
+              {transaction.paymentStatus === "UNPAID" ? "Belum lunas" : "Lunas"}
+            </dd>
+          </div>
           <div className="flex justify-between">
             <dt>Status penyimpanan</dt>
             <dd>

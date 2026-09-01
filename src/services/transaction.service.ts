@@ -54,8 +54,23 @@ export class TransactionService {
     return this.localStore.getPendingTransactions();
   }
 
-  /** Mencatat satu transaksi: validasi → simpan lokal → antre sinkron. */
-  async createTransaction(input: CreateTransactionInput): Promise<Transaction> {
+  /**
+   * Batalkan tulisan lokal satu transaksi — HANYA untuk rollback internal
+   * §6 (menjaga transaksi+stok konsisten). Bukan operasi bisnis.
+   */
+  async removeLocalTransaction(transactionId: string): Promise<void> {
+    await this.localStore.removeTransaction(transactionId);
+  }
+
+  /**
+   * Mencatat satu transaksi: validasi → simpan lokal → antre sinkron.
+   * `deferEnqueue: true` dipakai SaleService agar penulisan TRANSAKSI +
+   * STOK commit atomik DULU, antrean sinkron menyusul setelah aman.
+   */
+  async createTransaction(
+    input: CreateTransactionInput,
+    options: { deferEnqueue?: boolean } = {},
+  ): Promise<Transaction> {
     if (!PAYMENT_TYPES.includes(input.paymentType)) {
       throw new ValidationError("Jenis pembayaran harus CASH atau BON.", {
         field: "paymentType",
@@ -122,6 +137,8 @@ export class TransactionService {
       paymentType: input.paymentType,
       total,
       status: "COMPLETED",
+      // §6: CASH = sudah dibayar; BON = belum lunas sampai pelunasan dicatat.
+      paymentStatus: input.paymentType === "BON" ? "UNPAID" : "PAID",
       items: transactionItems,
       note: input.note?.trim() || null,
       syncedAt: null,
@@ -129,14 +146,21 @@ export class TransactionService {
 
     // Database perangkat = UTAMA: simpan di sini dulu (PENDING), lalu antre.
     await this.localStore.upsertTransaction(transaction);
+    if (!options.deferEnqueue) {
+      await this.enqueueTransactionOp(transaction);
+    }
+    return transaction;
+  }
+
+  /** Antre operasi sinkron untuk transaksi yang sudah tersimpan lokal. */
+  async enqueueTransactionOp(transaction: Transaction): Promise<void> {
     await this.syncEngine.enqueue({
       id: createPrefixedId("op"),
       kind: "CREATE",
       entity: "TRANSACTION",
       payload: transaction,
-      createdAt: timestamp,
+      createdAt: transaction.timestamp,
     });
-    return transaction;
   }
 
   /**
@@ -167,6 +191,7 @@ export class TransactionService {
       paymentType: "CASH",
       total,
       status: "COMPLETED",
+      paymentStatus: "PAID", // pelunasan bon = uang masuk
       items: [],
       note: `Bayar Bon: ${customer.name}`,
       syncedAt: null,

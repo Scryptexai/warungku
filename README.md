@@ -7,7 +7,7 @@ bahasa Indonesia sehari-hari.
 
 ---
 
-## Status: PHASE 5D — Product Catalog Revalidation & Real Barcode Data ✅
+## Status: PHASE 6 — Offline Transaction Engine ✅
 
 > Alur transaksi disusun ulang mengikuti cara kerja warung NYATA (§5A):
 > pemilik mencatat banyak nama barang dengan cepat — harga & total
@@ -80,6 +80,33 @@ BUKA APLIKASI → TRANSAKSI BARU (ketik nama ATAU scan — satu layar, §5A)
   Kasus lain (bingkai pratinjau, kamera dipakai aplikasi lain, kamera tidak
   ada, HTTP tidak aman) didiagnosis spesifik + tombol **Buka di Tab Baru**.
   Kode manual selalu tersedia sebagai jalur cadangan.
+
+### Mesin transaksi offline penuh (§6)
+
+Penyempurnaan di atas §5B agar SIKLUS TRANSAKSI PENUH tahan gangguan:
+
+- **Commit atomik transaksi + stok** (`SaleService` + `reduceStockOnce`):
+  transaksi ditulis (1 tulisan koleksi) → stok SEMUA produk dikurangi dalam
+  SATU tulisan koleksi → bila gagal, transaksi di-rollback otomatis
+  (`removeLocalTransaction`). Tidak ada lagi kondisi setengah-commit.
+  Antrean sinkron hanya diisi SETELAH commit lokal konsisten.
+- **Keranjang tahan restart** (`LocalStore.activeCart` + `lib/cart` murni):
+  bon yang belum disimpan TIDAK hilang saat aplikasi tertutup / HP mati /
+  koneksi putus di tengah transaksi — dipulihkan otomatis saat dibuka lagi.
+- **Status pembayaran per transaksi**: CASH → `PAID`, BON → `UNPAID`
+  (tampil “Belum Lunas” di riwayat & detail bon). Bukan manajemen piutang —
+  sekadar pencatatan benar sesuai §6.
+- **ID transaksi offline-aman**: UUID v4 (Web Crypto) — unik tanpa server,
+  teruji 20 transaksi beruntun tanpa duplikat.
+- Logika keranjang (merge jumlah, harga khusus transaksi, total) dipindah ke
+  `src/lib/cart.ts` murni — dipakai UI dan uji otomatis bersama.
+
+Uji otomatis (smoke 97, bagian §6 = TEST 1–12): cari offline · barcode
+offline · ulang×5 → satu baris qty 5 · 10 produk · total lokal · CASH
+(PAID) · BON (UNPAID + nama) · stok persis · restart (transaksi+stok utuh) ·
+snapshot harga tak berubah · putus jaringan di tengah (keranjang pulih,
+transaksi sah) · 20 transaksi rapid (ID unik, stok & total akurat) ·
+rollback commit.
 
 ### Mesin transaksi offline-first (§5B)
 

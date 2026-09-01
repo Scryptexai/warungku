@@ -102,40 +102,52 @@ export class SaleService {
       ? await this.customers.getOrCreateCustomerByName(customerName)
       : null;
 
-    // 1) Simpan transaksi (snapshot nama & harga saat ini).
-    const transaction = await this.transactions.createTransaction({
-      paymentType: input.paymentType,
-      customer: customerRecord
-        ? { id: customerRecord.id, name: customerRecord.name }
-        : null,
-      items: input.items.map((item) => {
-        const product = productMap.get(item.productId)!;
-        const override =
-          item.unitPrice !== undefined &&
-          Number.isFinite(item.unitPrice) &&
-          item.unitPrice >= 0
-            ? Math.round(item.unitPrice)
-            : null;
-        return {
-          productId: product.id,
-          barcode: product.barcode,
-          productName: product.name,
-          quantity: item.quantity,
-          // Harga master tetap menjadi default; harga khusus transaksi
-          // hanya menjadi snapshot di transaksi ini (§5A & §9).
-          unitPrice: override ?? product.currentPrice,
-        };
-      }),
-    });
+    // ============================================================
+    // §6 COMMIT ATOMIK: transaksi + item + stok konsisten atau
+    // dikembalikan. Urutan: (1) tulis transaksi (satu tulisan koleksi,
+    //     item ikut di dalamnya), (2) kurangi stok SEMUA produk dalam
+    //     SATU tulisan koleksi. Bila (2) gagal → transaksi di-rollback.
+    //     Antrean sinkron baru diisi SETELAH keduanya aman.
+    // ============================================================
+    const transaction = await this.transactions.createTransaction(
+      {
+        paymentType: input.paymentType,
+        customer: customerRecord
+          ? { id: customerRecord.id, name: customerRecord.name }
+          : null,
+        items: input.items.map((item) => {
+          const product = productMap.get(item.productId)!;
+          const override =
+            item.unitPrice !== undefined &&
+            Number.isFinite(item.unitPrice) &&
+            item.unitPrice >= 0
+              ? Math.round(item.unitPrice)
+              : null;
+          return {
+            productId: product.id,
+            barcode: product.barcode,
+            productName: product.name,
+            quantity: item.quantity,
+            // Harga master tetap menjadi default; harga khusus transaksi
+            // hanya menjadi snapshot di transaksi ini (§5A & §9).
+            unitPrice: override ?? product.currentPrice,
+          };
+        }),
+      },
+      { deferEnqueue: true }, // antre setelah stok aman (§6)
+    );
 
-    // 2) Kurangi stok: stok - terjual = stok baru (konsisten dengan transaksi).
-    const stockUpdates: RecordSaleResult["stockUpdates"] = [];
-    for (const item of input.items) {
-      const product = productMap.get(item.productId)!;
-      const newStock = Math.max(0, Math.round(product.stock - item.quantity));
-      const updated = await this.products.updateProduct(product.id, { stock: newStock });
-      stockUpdates.push({ product: updated, newStock });
+    let stockUpdates: RecordSaleResult["stockUpdates"];
+    try {
+      stockUpdates = await this.products.reduceStockOnce(input.items);
+    } catch (error) {
+      // Rollback: transaksi batal, stok tidak tersentuh (satu tulisan
+      // koleksi = gagal sebelum efek), kasir tetap memegang bon.
+      await this.transactions.removeLocalTransaction(transaction.id);
+      throw error;
     }
+    // Commit lokal selesai & konsisten → baru antre sinkron (latar belakang).
+    await this.transactions.enqueueTransactionOp(transaction);
 
     // 3) Bon → tambah saldo bon pelanggan (total bon = total transaksi).
     if (customerRecord) {

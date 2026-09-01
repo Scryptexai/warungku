@@ -74,7 +74,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <AppContainerContext.Provider value={container}>
       <CatalogProvider container={container}>
-        <CartProvider>{children}</CartProvider>
+        <CartProvider localStore={container.localStore}>{children}</CartProvider>
       </CatalogProvider>
     </AppContainerContext.Provider>
   );

@@ -6,6 +6,7 @@ import type {
   SyncStatusSnapshot,
   Transaction,
 } from "@/domain";
+import type { CartItemSnapshot } from "@/lib/cart";
 
 /**
  * KONTRAK PERSISTENSI LOKAL (perangkat).
@@ -29,6 +30,7 @@ export const LOCAL_STORE_KEYS = [
   "syncQueue", // antrean operasi menuju Google Sheets
   "syncStatus", // status sinkronisasi terakhir
   "storeProfile", // profil warung
+  "activeCart", // §6: keranjang transaksi berjalan (tahan restart)
 ] as const;
 export type LocalStoreKey = (typeof LOCAL_STORE_KEYS)[number];
 
@@ -58,6 +60,11 @@ export interface LocalStore {
   upsertTransaction(transaction: Transaction): Promise<void>;
   /** Timpa seluruh koleksi transaksi (hasil merge pull dari Sheets). */
   replaceAllTransactions(transactions: Transaction[]): Promise<void>;
+  /**
+   * Hapus SATU transaksi dari perangkat — HANYA untuk rollback internal
+   * §6 (menjaga transaksi+stok konsisten). Bukan operasi bisnis.
+   */
+  removeTransaction(transactionId: string): Promise<void>;
   /** Tandai transaksi sudah tersinkron ke Google Sheets (JANGAN dihapus). */
   markTransactionSynced(transactionId: string, syncedAt: string): Promise<void>;
 
@@ -74,6 +81,16 @@ export interface LocalStore {
   // ----------------------------------------------- Status sinkronisasi
   getSyncStatus(): Promise<SyncStatusSnapshot | null>;
   setSyncStatus(status: SyncStatusSnapshot): Promise<void>;
+
+  // ------------------------------------------------ Keranjang aktif (§6)
+  /**
+   * Keranjang transaksi yang sedang berjalan — dipertahankan di perangkat
+   * agar KASIR TIDAK KEHILANGAN bon yang belum disimpan saat aplikasi
+   * tertutup/HP mati/restart di tengah transaksi. Dikosongkan setelah
+   * transaksi selesai disimpan.
+   */
+  getActiveCart(): Promise<CartItemSnapshot[]>;
+  setActiveCart(items: CartItemSnapshot[]): Promise<void>;
 
   // ------------------------------------------------------------ Utilitas
   /** Menghapus seluruh data lokal (dipakai saat putus koneksi warung). */
